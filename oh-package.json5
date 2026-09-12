@@ -1,0 +1,8 @@
+{
+  "modelVersion": "5.0.5",
+  "description": "儿童习惯打卡积分平台",
+  "dependencies": {},
+  "devDependencies": {
+    "@ohos/hvigor-ohos-plugin": "6.1.0"
+  }
+}

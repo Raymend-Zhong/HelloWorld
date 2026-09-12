@@ -1,0 +1,7 @@
+{
+  "string": [
+    { "name": "module_desc", "value": "儿童习惯打卡积分平台" },
+    { "name": "entryability_desc", "value": "成长打卡入口" },
+    { "name": "entryability_label", "value": "成长打卡" }
+  ]
+}
