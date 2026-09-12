@@ -6,11 +6,6 @@ import type {
   PersistenceAdapter,
 } from '../domain/FamilyHabitModule';
 
-const STORE_CONFIG: relationalStore.StoreConfig = {
-  name: 'family_habit.db',
-  securityLevel: relationalStore.SecurityLevel.S2,
-};
-
 const CREATE_STATE_TABLE = `CREATE TABLE IF NOT EXISTS family_state (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   schema_version INTEGER NOT NULL,
@@ -23,10 +18,18 @@ export class ArkDataPersistenceAdapter implements PersistenceAdapter {
 
   static async open(
     context: common.UIAbilityContext,
+    storeName: string = 'family_habit.db',
   ): Promise<ArkDataPersistenceAdapter> {
-    const store = await relationalStore.getRdbStore(context, STORE_CONFIG);
+    const store = await relationalStore.getRdbStore(context, {
+      name: storeName,
+      securityLevel: relationalStore.SecurityLevel.S2,
+    });
     await store.execute(CREATE_STATE_TABLE, 0);
     return new ArkDataPersistenceAdapter(store);
+  }
+
+  close(): void {
+    this.store.close();
   }
 
   async load(): Promise<FamilyState | null> {
