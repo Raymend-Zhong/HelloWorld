@@ -234,6 +234,15 @@ export class FamilyHabitModule {
           error: { code: 'PERMISSION_DENIED', message: '当前入口不能设置家长密码。' },
         };
       }
+      if (this.state.parentCredential !== null) {
+        return {
+          ok: false,
+          error: {
+            code: 'PARENT_SETUP_COMPLETE',
+            message: '家长密码已经设置，请使用密码进入。',
+          },
+        };
+      }
       if (command.password.length === 0) {
         return {
           ok: false,

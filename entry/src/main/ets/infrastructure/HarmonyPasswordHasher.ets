@@ -1,9 +1,8 @@
-import { buffer } from '@kit.ArkTS';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 
 import type { PasswordHasher } from '../domain/FamilyHabitModule';
 
-const HASH_ROUNDS = 10000;
+const KDF_ITERATIONS = 120000;
 
 function bytesToHex(bytes: Uint8Array): string {
   let result = '';
@@ -13,11 +12,12 @@ function bytesToHex(bytes: Uint8Array): string {
   return result;
 }
 
-async function sha256(value: string): Promise<string> {
-  const digest = cryptoFramework.createMd('SHA256');
-  await digest.update({ data: new Uint8Array(buffer.from(value, 'utf-8').buffer) });
-  const output = await digest.digest();
-  return bytesToHex(output.data);
+function hexToBytes(value: string): Uint8Array {
+  const bytes = new Uint8Array(value.length / 2);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
+  }
+  return bytes;
 }
 
 function constantTimeEqual(left: string, right: string): boolean {
@@ -36,11 +36,15 @@ export class HarmonyPasswordHasher implements PasswordHasher {
   }
 
   async derive(password: string, salt: string): Promise<string> {
-    let digest = `${salt}:${password}`;
-    for (let round = 0; round < HASH_ROUNDS; round += 1) {
-      digest = await sha256(digest);
-    }
-    return digest;
+    const spec: cryptoFramework.PBKDF2Spec = {
+      algName: 'PBKDF2',
+      password,
+      salt: hexToBytes(salt),
+      iterations: KDF_ITERATIONS,
+      keySize: 32,
+    };
+    const kdf = cryptoFramework.createKdf('PBKDF2|SHA256');
+    return bytesToHex((await kdf.generateSecret(spec)).data);
   }
 
   async verify(password: string, salt: string, digest: string): Promise<boolean> {

@@ -5,6 +5,8 @@ import {
   ParentSetupSession,
 } from '../domain/FamilyHabitModule';
 
+type Screen = 'entry' | 'child' | 'parent-auth' | 'parent';
+
 @Entry
 @Component
 struct Index {
@@ -12,7 +14,7 @@ struct Index {
     'familyHabitModule',
   ) as FamilyHabitModule;
 
-  @State private screen: string = 'entry';
+  @State private screen: Screen = 'entry';
   @State private currentChildId: ChildId = 'guoguo';
   @State private currentChildName: string = '';
   @State private currentTheme: string = 'mature';
@@ -212,8 +214,10 @@ struct Index {
       this.ChildPanel()
     } else if (this.screen === 'parent-auth') {
       this.ParentAuthPanel()
-    } else {
+    } else if (this.screen === 'parent') {
       this.ParentPanel()
+    } else {
+      this.EntryPanel()
     }
   }
 }

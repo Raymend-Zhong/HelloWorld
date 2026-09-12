@@ -58,6 +58,15 @@ test('[TASK-3][AC-04] 家长设置密码后只有正确密码可以进入家长�
   assert.notEqual(stored?.parentCredential, null);
   assert.equal(JSON.stringify(stored).includes('2468'), false);
 
+  const resetWithoutVerification = await module.execute(setup.value.token, {
+    type: 'set-parent-password',
+    password: '1357',
+  });
+  assert.equal(resetWithoutVerification.ok, false);
+  if (!resetWithoutVerification.ok) {
+    assert.equal(resetWithoutVerification.error.code, 'PARENT_SETUP_COMPLETE');
+  }
+
   const wrongPassword = await module.openSession({
     entry: 'parent',
     password: '0000',
@@ -74,6 +83,15 @@ test('[TASK-3][AC-04] 家长设置密码后只有正确密码可以进入家长�
   });
   assert.equal(parent.ok, true);
   if (parent.ok) assert.equal(parent.value.role, 'parent');
+
+  const restartedModule = await FamilyHabitModule.create(persistence, passwordHasher);
+  const setupAfterRestart = await restartedModule.openSession({ entry: 'parent-setup' });
+  assert.equal(setupAfterRestart.ok, false);
+  const parentAfterRestart = await restartedModule.openSession({
+    entry: 'parent',
+    password: '2468',
+  });
+  assert.equal(parentAfterRestart.ok, true);
 });
 
 test('[TASK-3][AC-02][AC-03] 孩子免密码进入并切换到清楚标识的孩子账套', async () => {
