@@ -23,6 +23,9 @@ const passwordHasher: PasswordHasher = {
 export default function arkDataContractTest(): void {
   describe('[TASK-3] ArkData持久化合约', () => {
     it('[TASK-3][AC-01][AC-04] 提交后重新打开数据库可读取完整状态', Level.LEVEL2, async (done: Function) => {
+      let firstAdapter: ArkDataPersistenceAdapter | null = null;
+      let reopenedAdapter: ArkDataPersistenceAdapter | null = null;
+      let ability: UIAbility | null = null;
       try {
         const driver = Driver.create();
         const want: Want = {
@@ -31,10 +34,10 @@ export default function arkDataContractTest(): void {
         };
         await delegator.startAbility(want);
         await driver.waitForIdle(3000, 5000);
-        const ability: UIAbility = await delegator.getCurrentTopAbility();
+        ability = await delegator.getCurrentTopAbility();
 
         await relationalStore.deleteRdbStore(ability.context, TEST_STORE);
-        const firstAdapter = await ArkDataPersistenceAdapter.open(
+        firstAdapter = await ArkDataPersistenceAdapter.open(
           ability.context,
           TEST_STORE,
         );
@@ -54,8 +57,9 @@ export default function arkDataContractTest(): void {
         });
         expect(passwordSaved.ok).assertTrue();
         firstAdapter.close();
+        firstAdapter = null;
 
-        const reopenedAdapter = await ArkDataPersistenceAdapter.open(
+        reopenedAdapter = await ArkDataPersistenceAdapter.open(
           ability.context,
           TEST_STORE,
         );
@@ -77,9 +81,12 @@ export default function arkDataContractTest(): void {
           expect(restoredOverview.value.children[0].id).assertEqual('guoguo');
           expect(restoredOverview.value.children[1].id).assertEqual('yangyang');
         }
-        reopenedAdapter.close();
-        await relationalStore.deleteRdbStore(ability.context, TEST_STORE);
       } finally {
+        firstAdapter?.close();
+        reopenedAdapter?.close();
+        if (ability !== null) {
+          await relationalStore.deleteRdbStore(ability.context, TEST_STORE);
+        }
         done();
       }
     });
