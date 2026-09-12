@@ -256,7 +256,17 @@ export class FamilyHabitModule {
         revision: this.state.revision + 1,
         parentCredential: { salt, digest },
       };
-      await this.persistence.save(nextState);
+      try {
+        await this.persistence.save(nextState);
+      } catch (_error) {
+        return {
+          ok: false,
+          error: {
+            code: 'PERSISTENCE_FAILED',
+            message: '保存失败，请稍后重试。',
+          },
+        };
+      }
       this.state = nextState;
       return { ok: true, value: { revision: nextState.revision } };
     }

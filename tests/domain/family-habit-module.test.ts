@@ -4,7 +4,9 @@ import test from 'node:test';
 import {
   FamilyHabitModule,
   MemoryPersistenceAdapter,
+  type FamilyState,
   type PasswordHasher,
+  type PersistenceAdapter,
 } from '../../entry/src/main/ets/domain/FamilyHabitModule.js';
 
 const passwordHasher: PasswordHasher = {
@@ -92,6 +94,44 @@ test('[TASK-3][AC-04] 家长设置密码后只有正确密码可以进入家长�
     password: '2468',
   });
   assert.equal(parentAfterRestart.ok, true);
+});
+
+test('[TASK-3][AC-04] 家长密码写入失败时返回中文错误且状态不变', async () => {
+  class FailingPersistence implements PersistenceAdapter {
+    private state: FamilyState | null = null;
+    private saveCount = 0;
+
+    async load(): Promise<FamilyState | null> {
+      return this.state;
+    }
+
+    async save(state: FamilyState): Promise<void> {
+      this.saveCount += 1;
+      if (this.saveCount > 1) throw new Error('模拟磁盘故障');
+      this.state = state;
+    }
+  }
+
+  const module = await FamilyHabitModule.create(
+    new FailingPersistence(),
+    passwordHasher,
+  );
+  const setup = await module.openSession({ entry: 'parent-setup' });
+  assert.equal(setup.ok, true);
+  if (!setup.ok) return;
+
+  const result = await module.execute(setup.value.token, {
+    type: 'set-parent-password',
+    password: '2468',
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.error.code, 'PERSISTENCE_FAILED');
+    assert.equal(result.error.message, '保存失败，请稍后重试。');
+  }
+
+  const setupAgain = await module.openSession({ entry: 'parent-setup' });
+  assert.equal(setupAgain.ok, true);
 });
 
 test('[TASK-3][AC-02][AC-03] 孩子免密码进入并切换到清楚标识的孩子账套', async () => {

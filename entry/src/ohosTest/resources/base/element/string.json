@@ -1,0 +1,7 @@
+{
+  "string": [
+    { "name": "module_test_desc", "value": "成长打卡自动化测试" },
+    { "name": "testability_desc", "value": "执行成长打卡自动化测试" },
+    { "name": "testability_label", "value": "成长打卡测试" }
+  ]
+}

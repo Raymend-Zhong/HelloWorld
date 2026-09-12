@@ -8,7 +8,7 @@ import type {
 
 const STORE_CONFIG: relationalStore.StoreConfig = {
   name: 'family_habit.db',
-  securityLevel: relationalStore.SecurityLevel.S1,
+  securityLevel: relationalStore.SecurityLevel.S2,
 };
 
 const CREATE_STATE_TABLE = `CREATE TABLE IF NOT EXISTS family_state (
