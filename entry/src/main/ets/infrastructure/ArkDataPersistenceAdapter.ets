@@ -14,7 +14,11 @@ const CREATE_STATE_TABLE = `CREATE TABLE IF NOT EXISTS family_state (
 )`;
 
 export class ArkDataPersistenceAdapter implements PersistenceAdapter {
-  private constructor(private readonly store: relationalStore.RdbStore) {}
+  private readonly store: relationalStore.RdbStore;
+
+  private constructor(store: relationalStore.RdbStore) {
+    this.store = store;
+  }
 
   static async open(
     context: common.UIAbilityContext,
@@ -55,9 +59,9 @@ export class ArkDataPersistenceAdapter implements PersistenceAdapter {
         [1, state.schemaVersion, state.revision, JSON.stringify(state)],
       );
       await this.store.commit(transactionId);
-    } catch (error) {
+    } catch (_) {
       await this.store.rollback(transactionId);
-      throw error;
+      throw new Error('保存家庭数据失败。');
     }
   }
 }

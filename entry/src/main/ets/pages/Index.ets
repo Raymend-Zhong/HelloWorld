@@ -24,14 +24,18 @@ struct Index {
 
   private async openChild(childId: ChildId): Promise<void> {
     const session = await this.module.openSession({ entry: 'child', childId });
-    if (!session.ok || session.value.role !== 'child') {
-      this.message = session.ok ? '孩子入口状态异常。' : session.error.message;
+    if (session.ok === false) {
+      this.message = session.error.message;
+      return;
+    }
+    if (session.value.role !== 'child') {
+      this.message = '孩子入口状态异常。';
       return;
     }
     const home = await this.module.inspect(session.value.token, {
       type: 'child-home',
     });
-    if (!home.ok) {
+    if (home.ok === false) {
       this.message = home.error.message;
       return;
     }
@@ -65,7 +69,7 @@ struct Index {
         type: 'set-parent-password',
         password: this.password,
       });
-      if (!saved.ok) {
+      if (saved.ok === false) {
         this.message = saved.error.message;
         return;
       }
@@ -74,7 +78,7 @@ struct Index {
       entry: 'parent',
       password: this.password,
     });
-    if (!parent.ok) {
+    if (parent.ok === false) {
       this.message = parent.error.message;
       return;
     }
