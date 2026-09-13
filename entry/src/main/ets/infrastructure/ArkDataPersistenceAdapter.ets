@@ -28,7 +28,7 @@ export class ArkDataPersistenceAdapter implements PersistenceAdapter {
       name: storeName,
       securityLevel: relationalStore.SecurityLevel.S2,
     });
-    await store.execute(CREATE_STATE_TABLE, 0);
+    await store.executeSql(CREATE_STATE_TABLE);
     return new ArkDataPersistenceAdapter(store);
   }
 
@@ -50,17 +50,16 @@ export class ArkDataPersistenceAdapter implements PersistenceAdapter {
   }
 
   async save(state: FamilyState): Promise<void> {
-    const transactionId = await this.store.beginTrans();
+    this.store.beginTransaction();
     try {
-      await this.store.execute(
+      await this.store.executeSql(
         `INSERT OR REPLACE INTO family_state
           (id, schema_version, revision, payload) VALUES (?, ?, ?, ?)`,
-        transactionId,
         [1, state.schemaVersion, state.revision, JSON.stringify(state)],
       );
-      await this.store.commit(transactionId);
+      this.store.commit();
     } catch (_) {
-      await this.store.rollback(transactionId);
+      this.store.rollBack();
       throw new Error('保存家庭数据失败。');
     }
   }

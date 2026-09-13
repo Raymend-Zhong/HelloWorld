@@ -1,13 +1,15 @@
+import { GoalPanel, localBusinessDate } from './GoalPanel';
+import { Goal } from '../domain/Goals';
 import { TaskPoolPanel } from './TaskPoolPanel';
 import {
-  ChildHome,
+  ChildDay,
+  ScheduledTask,
   ChildId,
   FamilyHabitModule,
   ParentSetupSession,
-  TaskPoolTask,
 } from '../domain/FamilyHabitModule';
 
-type Screen = 'entry' | 'child' | 'parent-auth' | 'parent' | 'task-pool';
+type Screen = 'entry' | 'child' | 'parent-auth' | 'parent' | 'task-pool' | 'goals';
 
 @Entry
 @Component
@@ -23,7 +25,8 @@ struct Index {
   @State private password: string = '';
   @State private message: string = '';
   private parentToken: string = '';
-  @State private childTasks: TaskPoolTask[] = [];
+  @State private childTasks: ScheduledTask[] = [];
+  @State private childGoals: Goal[] = [];
   private parentSetupSession: ParentSetupSession | null = null;
 
   private async openChild(childId: ChildId): Promise<void> {
@@ -37,7 +40,7 @@ struct Index {
       return;
     }
     const home = await this.module.inspect(session.value.token, {
-      type: 'child-home',
+      type: 'child-day', childId, businessDate: localBusinessDate(),
     });
     if (home.ok === false) {
       this.message = home.error.message;
@@ -46,8 +49,9 @@ struct Index {
     this.showChild(home.value);
   }
 
-  private showChild(home: ChildHome): void {
+  private showChild(home: ChildDay): void {
     this.childTasks = home.tasks;
+    this.childGoals = home.goals;
     this.currentChildId = home.currentChild.id;
     this.currentChildName = home.currentChild.displayName;
     this.currentTheme = home.currentChild.theme;
@@ -164,15 +168,22 @@ struct Index {
           .onClick(() => this.openChild('yangyang'))
       }
 
-      Text('任务池 · 由家长安排到打卡目标后开始打卡').fontSize(18).fontColor('#8A7C72')
+      Text('今天的任务与打卡目标').fontSize(18).fontColor('#8A7C72')
       Scroll() {
         Column({ space: 12 }) {
           if (this.childTasks.length === 0) {
-            Text('还没有任务，请家长从模板添加。').fontSize(20)
+            Text('今天没有安排任务，可以看看自己的目标。').fontSize(20)
           }
-          ForEach(this.childTasks, (task: TaskPoolTask) => {
-            Text(`${task.name}${task.disabled ? '（已停用）' : ''}`).fontSize(22)
-          }, (task: TaskPoolTask) => task.id)
+          ForEach(this.childTasks, (task: ScheduledTask) => {
+            Text(task.name).fontSize(22)
+          }, (task: ScheduledTask) => task.taskId)
+          ForEach(this.childGoals, (goal: Goal) => {
+            Column({ space: 8 }) {
+              Text(goal.name).id(`child-goal-${goal.id}`).fontSize(24).fontWeight(FontWeight.Bold)
+              Text(`${goal.points} / ${goal.threshold} 分 · ${goal.activityId === 'cat' ? '养小猫' : '种小树'}`).fontSize(20)
+              Text(`目标奖励：${goal.reward}`).fontSize(18)
+            }.width('100%').padding(16).backgroundColor(Color.White).borderRadius(16)
+          }, (goal: Goal) => goal.id)
         }.width('100%')
       }.layoutWeight(1).width('100%')
     }
@@ -213,6 +224,7 @@ struct Index {
         .id('parent-screen')
         .fontSize(32)
         .fontWeight(FontWeight.Bold)
+      Button('管理打卡目标').id('parent-goals').onClick(() => this.screen = 'goals')
       Button('管理任务池').id('parent-task-pool').onClick(() => this.screen = 'task-pool')
       Text('为果果和阳阳分别安排适合的学习与生活任务。')
         .fontSize(19)
@@ -232,6 +244,8 @@ struct Index {
       this.ChildPanel()
     } else if (this.screen === 'parent-auth') {
       this.ParentAuthPanel()
+    } else if (this.screen === 'goals') {
+      GoalPanel({ module: this.module, parentToken: this.parentToken, onBack: () => this.screen = 'parent' })
     } else if (this.screen === 'task-pool') {
       TaskPoolPanel({ module: this.module, parentToken: this.parentToken, onBack: () => this.screen = 'parent' })
     } else if (this.screen === 'parent') {

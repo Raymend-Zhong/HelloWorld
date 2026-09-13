@@ -4,7 +4,9 @@
     "type": "feature",
     "description": "$string:module_test_desc",
     "mainElement": "TestAbility",
-    "deviceTypes": ["tablet"],
+    "deviceTypes": [
+      "tablet"
+    ],
     "deliveryWithInstall": true,
     "installationFree": false,
     "pages": "$profile:test_pages",
@@ -15,6 +17,13 @@
         "description": "$string:testability_desc",
         "icon": "$media:test_icon",
         "label": "$string:testability_label",
+        "exported": true,
+        "startWindowIcon": "$media:test_icon",
+        "startWindowBackground": "$color:start_window_background"
+      },
+      {
+        "name": "GoalTestAbility",
+        "srcEntry": "./ets/testability/GoalTestAbility.ets",
         "exported": true,
         "startWindowIcon": "$media:test_icon",
         "startWindowBackground": "$color:start_window_background"
