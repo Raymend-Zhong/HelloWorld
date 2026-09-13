@@ -41,3 +41,56 @@ npm test
 ```
 
 HarmonyOS 主 HAP 和测试 HAP 使用本地 DevEco 工具构建；有可用设备时运行 ArkData 和 ArkUI 自动化。
+
+
+## 补充回归与页面选择器
+
+- `TASK-4-S10`：并发复制不丢任务且标识不同。
+- `TASK-4-S11`：不存在的孩子或模板被拒绝，跨孩子修改不改变任务。
+- `TASK-4-S12`：未来模式版本被拒绝，不降级覆盖。
+- `TASK-4-S13`：迁移保存失败保留旧数据，重试成功（持久化合约回归，现有迁移实现直接通过）。
+- `TASK-4-S14`：命令排队时不随调用者后续草稿修改而变化。
+- `TASK-4-UI02`：沿用仓库既有静态控件契约，验证任务池入口；不替代真实交互测试。
+- `TASK-4-DB01`：真实 ArkData 旧模式升级、复制、编辑、停用、关闭重开。
+- ArkUI 稳定控件：`parent-task-pool`、`pool-guoguo`、`pool-yangyang`、`task-add-template`、`templates-junior`、`templates-kindergarten`、`template-copy-<模板ID>`、`task-open-<任务ID>`、`task-name`、`task-description`、`task-completion-points`、`task-deduct-enabled`、`task-deduction-points`、`task-streak-enabled`、`task-streak-cap`、`task-save`、`task-disable`、`task-message`、`task-editor-back`、`task-pool-back`。
+
+## 红—绿记录
+
+| 选择器 | 已运行的失败原因 | 实现后的结果 |
+| --- | --- | --- |
+| S01 | 模板查询返回 QUERY_UNSUPPORTED | 通过 |
+| S02、S03、S07 | 复制、编辑、停用返回 COMMAND_UNSUPPORTED | 通过 |
+| S04 | 非法名称与积分配置被错误接受 | 通过 |
+| S05 | 未验证家长可以复制任务 | 通过 |
+| S06 | 保存失败直接抛出异常 | 通过 |
+| S08 | 数据模式仍为 1 | 通过 |
+| S09 | 种子版本未保存和升级 | 通过 |
+| S10 | 并发任务得到同一标识 | 通过 |
+| S11 | 不存在的孩子被错误接受 | 通过 |
+| S12 | 未来版本没有被拒绝 | 通过 |
+| S14 | 提交后变更草稿污染已排队命令 | 通过 |
+| UI02 | 家长任务池入口控件缺失 | 通过 |
+
+以上 S 编号均带 `TASK-4-` 前缀。UI01 已编写并构建，但设备启动失败未进入断言，因此不记录为功能红灯或绿灯。
+
+## 审查记录
+
+- 规范轴：本地检查中文文档、注释、错误及模块边界；ArkUI 仅调用家庭习惯公共入口。抽取统一保存处理，消除密码和任务保存的重复错误处理。
+- 规格轴：本地核对 AC-06、AC-07、AC-53 及已确认的 AC-08 部分范围。发现排队命令引用可变草稿的问题，新增 S14 并修复；不扩展目标能力。
+- code-review 的两名独立审查代理均因账号额度限制未能执行，未获得独立审查结论；以上是本地双轴审查。
+
+## 设备验证限制
+
+本轮设备启动返回 `10106102`：MatePad 屏幕锁定，系统拒绝启动应用。真实 ArkUI 与 ArkData 合约尚未执行完成；用户解锁后需要补跑。静态契约与 HAP 构建不能替代这些验收。
+
+不关闭任务 #4，不将 AC-08 标为完整通过，不提交本机自动签名配置。
+
+## 最终本地验证
+
+- `npm test`：21/21 通过，0 失败、0 跳过。
+- `npm run typecheck`：通过。
+- `git diff --check`：通过。
+- DevEco 主 HAP：构建及签名成功。
+- DevEco 测试 HAP：构建及签名成功。
+- 领域初始切片提交：`1e152cb`（AC-06、AC-07、AC-53、AC-08 部分）。
+- 后续页面、回归修复及验收记录由含 `[TASK-4]` 的后续提交承载，可用 `git log 1a5b1ca..HEAD --oneline` 查询。

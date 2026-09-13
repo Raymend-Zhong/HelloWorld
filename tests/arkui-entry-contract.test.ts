@@ -25,3 +25,8 @@ test('[TASK-3][AC-01][AC-02][AC-03][AC-04] ArkUI 入口暴露稳定自动化选�
     assert.match(source, new RegExp(`\\.id\\('${selector}'\\)`));
   }
 });
+
+test('[TASK-4-UI02][AC-06] 家长管理提供任务池入口', async () => {
+  const source = await readFile(INDEX_PATH, 'utf8');
+  assert.match(source, /\.id\('parent-task-pool'\)/);
+});

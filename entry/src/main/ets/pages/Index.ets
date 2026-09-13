@@ -1,11 +1,13 @@
+import { TaskPoolPanel } from './TaskPoolPanel';
 import {
   ChildHome,
   ChildId,
   FamilyHabitModule,
   ParentSetupSession,
+  TaskPoolTask,
 } from '../domain/FamilyHabitModule';
 
-type Screen = 'entry' | 'child' | 'parent-auth' | 'parent';
+type Screen = 'entry' | 'child' | 'parent-auth' | 'parent' | 'task-pool';
 
 @Entry
 @Component
@@ -20,6 +22,8 @@ struct Index {
   @State private currentTheme: string = 'mature';
   @State private password: string = '';
   @State private message: string = '';
+  private parentToken: string = '';
+  @State private childTasks: TaskPoolTask[] = [];
   private parentSetupSession: ParentSetupSession | null = null;
 
   private async openChild(childId: ChildId): Promise<void> {
@@ -43,6 +47,7 @@ struct Index {
   }
 
   private showChild(home: ChildHome): void {
+    this.childTasks = home.tasks;
     this.currentChildId = home.currentChild.id;
     this.currentChildName = home.currentChild.displayName;
     this.currentTheme = home.currentChild.theme;
@@ -84,6 +89,7 @@ struct Index {
     }
     this.password = '';
     this.message = '';
+    this.parentToken = parent.value.token;
     this.screen = 'parent';
   }
 
@@ -158,10 +164,17 @@ struct Index {
           .onClick(() => this.openChild('yangyang'))
       }
 
-      Text('今天的任务会在后续任务中加入。')
-        .fontSize(18)
-        .fontColor('#8A7C72')
-        .margin({ top: 40 })
+      Text('任务池 · 由家长安排到打卡目标后开始打卡').fontSize(18).fontColor('#8A7C72')
+      Scroll() {
+        Column({ space: 12 }) {
+          if (this.childTasks.length === 0) {
+            Text('还没有任务，请家长从模板添加。').fontSize(20)
+          }
+          ForEach(this.childTasks, (task: TaskPoolTask) => {
+            Text(`${task.name}${task.disabled ? '（已停用）' : ''}`).fontSize(22)
+          }, (task: TaskPoolTask) => task.id)
+        }.width('100%')
+      }.layoutWeight(1).width('100%')
     }
     .width('100%')
     .height('100%')
@@ -200,10 +213,11 @@ struct Index {
         .id('parent-screen')
         .fontSize(32)
         .fontWeight(FontWeight.Bold)
-      Text('已通过家长密码验证。后续任务将在这里加入管理和每日清算。')
+      Button('管理任务池').id('parent-task-pool').onClick(() => this.screen = 'task-pool')
+      Text('为果果和阳阳分别安排适合的学习与生活任务。')
         .fontSize(19)
         .fontColor('#65584F')
-      Button('退出家长端').onClick(() => this.screen = 'entry')
+      Button('退出家长端').onClick(() => { this.parentToken = ''; this.screen = 'entry'; })
     }
     .width('100%')
     .height('100%')
@@ -218,6 +232,8 @@ struct Index {
       this.ChildPanel()
     } else if (this.screen === 'parent-auth') {
       this.ParentAuthPanel()
+    } else if (this.screen === 'task-pool') {
+      TaskPoolPanel({ module: this.module, parentToken: this.parentToken, onBack: () => this.screen = 'parent' })
     } else if (this.screen === 'parent') {
       this.ParentPanel()
     } else {

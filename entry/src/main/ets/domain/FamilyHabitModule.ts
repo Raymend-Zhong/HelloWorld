@@ -256,7 +256,10 @@ export class FamilyHabitModule {
   }
 
   async execute(token: string, command: DomainCommand): Promise<Result<ExecuteReceipt>> {
-    const result = this.pendingCommand.then(() => this.executeCommand(token, command));
+    const submitted: DomainCommand = command.type === 'edit-task-pool-task'
+      ? { ...command, defaultRules: { ...command.defaultRules } }
+      : { ...command };
+    const result = this.pendingCommand.then(() => this.executeCommand(token, submitted));
     this.pendingCommand = result.then(() => {}, () => {});
     return result;
   }
@@ -313,19 +316,7 @@ export class FamilyHabitModule {
         revision: this.state.revision + 1,
         parentCredential: { salt, digest },
       };
-      try {
-        await this.persistence.save(nextState);
-      } catch (_error) {
-        return {
-          ok: false,
-          error: {
-            code: 'PERSISTENCE_FAILED',
-            message: '保存失败，请稍后重试。',
-          },
-        };
-      }
-      this.state = nextState;
-      return { ok: true, value: { revision: nextState.revision } };
+      return this.saveState(nextState);
     }
     if (command.type === 'disable-task-pool-task') {
       const nextState = cloneState(this.state);
@@ -333,7 +324,7 @@ export class FamilyHabitModule {
       if (task === undefined) return { ok: false, error: { code: 'TASK_NOT_FOUND', message: '没有找到这个任务池任务。' } };
       task.disabled = true;
       nextState.revision += 1;
-      return this.saveTaskState(nextState, task.id);
+      return this.saveState(nextState, task.id);
     }
     if (command.type === 'edit-task-pool-task') {
       if (command.name.trim().length === 0) return { ok: false, error: { code: 'VALIDATION_FAILED', message: '请输入任务名称。' } };
@@ -353,7 +344,7 @@ export class FamilyHabitModule {
       task.description = command.description;
       task.defaultRules = { ...command.defaultRules };
       nextState.revision += 1;
-      return this.saveTaskState(nextState, task.id);
+      return this.saveState(nextState, task.id);
     }
     if (command.type === 'copy-task-template') {
       if (!this.state.children.some(child => child.id === command.childId)) {
@@ -369,7 +360,7 @@ export class FamilyHabitModule {
         defaultRules: { ...source.defaultRules }, disabled: false,
       };
       nextState.taskPool = [...(nextState.taskPool ?? []), task];
-      return this.saveTaskState(nextState, task.id);
+      return this.saveState(nextState, task.id);
     }
     return {
       ok: false,
@@ -377,14 +368,16 @@ export class FamilyHabitModule {
     };
   }
 
-  private async saveTaskState(nextState: FamilyState, taskId: string): Promise<Result<ExecuteReceipt>> {
+  private async saveState(nextState: FamilyState, taskId?: string): Promise<Result<ExecuteReceipt>> {
     try {
       await this.persistence.save(nextState);
     } catch (_) {
       return { ok: false, error: { code: 'PERSISTENCE_FAILED', message: '保存失败，请稍后重试。' } };
     }
     this.state = nextState;
-    return { ok: true, value: { revision: nextState.revision, taskId } };
+    const receipt: ExecuteReceipt = { revision: nextState.revision };
+    if (taskId !== undefined) receipt.taskId = taskId;
+    return { ok: true, value: receipt };
   }
 
   async inspect(

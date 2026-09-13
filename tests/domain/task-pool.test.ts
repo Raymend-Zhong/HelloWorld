@@ -232,3 +232,40 @@ test('[TASK-4-S12][AC-07] 不支持的未来数据版本被拒绝而不是降级
   await assert.rejects(FamilyHabitModule.create(persistence, hasher), /版本/);
   assert.deepEqual(await persistence.load(), future);
 });
+
+test('[TASK-4-S13][AC-07] 升级保存失败保留旧模式且重试可以恢复', async () => {
+  class FailingUpgrade extends MemoryPersistenceAdapter {
+    fail = false;
+    override async save(state: import('../../entry/src/main/ets/domain/FamilyHabitModule.js').FamilyState) {
+      if (this.fail) throw new Error('模拟升级失败');
+      await super.save(state);
+    }
+  }
+  const disk = new FailingUpgrade();
+  await disk.save({ schemaVersion: 1, revision: 7, children: [
+    { id: 'guoguo', displayName: '果果', avatar: 'guoguo', theme: 'mature' },
+    { id: 'yangyang', displayName: '阳阳', avatar: 'yangyang', theme: 'playful' },
+  ], parentCredential: { salt: '旧盐', digest: '旧盐:2468' } });
+  const before = await disk.load();
+  disk.fail = true;
+  await assert.rejects(FamilyHabitModule.create(disk, hasher), /模拟升级失败/);
+  assert.deepEqual(await disk.load(), before);
+  disk.fail = false;
+  const restarted = await FamilyHabitModule.create(disk, hasher);
+  const parent = value(await restarted.openSession({ entry: 'parent', password: '2468' }));
+  assert.equal(value(await restarted.inspect(parent.token, { type: 'task-templates', stage: 'junior' })).templates.length, 5);
+});
+
+test('[TASK-4-S14][AC-06] 已提交编辑命令不随调用者后续修改草稿而改变', async () => {
+  const { module, parent } = await family();
+  const copied = value(await module.execute(parent.token, { type: 'copy-task-template', childId: 'guoguo', templateId: 'junior-math' }));
+  const command = { type: 'edit-task-pool-task' as const, childId: 'guoguo' as const, taskId: copied.taskId!, name: '提交时的数学', description: '',
+    defaultRules: { completionPoints: 5, missedPolicy: 'no-points' as const, deductionPoints: 0, streakEnabled: false, streakCap: null } };
+  const saving = module.execute(parent.token, command);
+  command.name = '随后修改的草稿';
+  command.defaultRules.completionPoints = 20;
+  value(await saving);
+  const task = value(await module.inspect(parent.token, { type: 'task-pool', childId: 'guoguo' })).tasks[0]!;
+  assert.equal(task.name, '提交时的数学');
+  assert.equal(task.defaultRules.completionPoints, 5);
+});
