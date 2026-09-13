@@ -1,3 +1,5 @@
+import { builtInTemplates, TEMPLATE_SEED_VERSION, TaskRules, TaskStage, TaskTemplate } from './TaskTemplates.js';
+
 export type ChildId = 'guoguo' | 'yangyang';
 
 export interface ChildProfile {
@@ -12,7 +14,20 @@ export interface ParentCredential {
   digest: string;
 }
 
+export interface TaskPoolTask {
+  id: string;
+  childId: ChildId;
+  sourceTemplateId: string;
+  name: string;
+  description: string;
+  defaultRules: TaskRules;
+  disabled: boolean;
+}
+
 export interface FamilyState {
+  templateSeedVersion?: number;
+  taskTemplates?: TaskTemplate[];
+  taskPool?: TaskPoolTask[];
   schemaVersion: number;
   revision: number;
   children: ChildProfile[];
@@ -64,16 +79,22 @@ export type OpenSessionRequest =
 
 export type DomainCommand =
   | { type: 'set-parent-password'; password: string }
+  | { type: 'disable-task-pool-task'; childId: ChildId; taskId: string }
+  | { type: 'edit-task-pool-task'; childId: ChildId; taskId: string; name: string; description: string; defaultRules: TaskRules }
+  | { type: 'copy-task-template'; childId: ChildId; templateId: string }
   | { type: 'manage-task-pool' }
   | { type: 'manage-goal' }
   | { type: 'exempt-task' }
   | { type: 'confirm-settlement' };
 
 export interface ExecuteReceipt {
+  taskId?: string;
   revision: number;
 }
 
 export type InspectRequest =
+  | { type: 'task-pool'; childId: ChildId }
+  | { type: 'task-templates'; stage: TaskStage }
   | { type: 'family-overview' }
   | { type: 'child-home' };
 
@@ -86,12 +107,22 @@ export interface FamilyOverview {
 
 export interface ChildHome {
   currentChild: ChildProfile;
-  tasks: unknown[];
+  tasks: TaskPoolTask[];
   goals: unknown[];
   revision: number;
 }
 
-export type InspectSnapshot = FamilyOverview | ChildHome;
+export interface TemplateSnapshot {
+  templates: TaskTemplate[];
+}
+
+export interface TaskPoolSnapshot {
+  currentChild: ChildProfile;
+  tasks: TaskPoolTask[];
+  revision: number;
+}
+
+export type InspectSnapshot = FamilyOverview | ChildHome | TemplateSnapshot | TaskPoolSnapshot;
 
 const INITIAL_CHILDREN: ChildProfile[] = [
   {
@@ -108,8 +139,15 @@ const INITIAL_CHILDREN: ChildProfile[] = [
   },
 ];
 
+function cloneTask(task: TaskPoolTask): TaskPoolTask {
+  return { ...task, defaultRules: { ...task.defaultRules } };
+}
+
 function cloneState(state: FamilyState): FamilyState {
   return {
+    templateSeedVersion: state.templateSeedVersion ?? 0,
+    taskTemplates: (state.taskTemplates ?? []).map(item => ({ ...item, defaultRules: { ...item.defaultRules } })),
+    taskPool: (state.taskPool ?? []).map(cloneTask),
     schemaVersion: state.schemaVersion,
     revision: state.revision,
     children: state.children.map((child) => ({ ...child })),
@@ -134,6 +172,7 @@ export class MemoryPersistenceAdapter implements PersistenceAdapter {
 export class FamilyHabitModule {
   private readonly sessions = new Map<string, Session>();
   private nextSessionId = 1;
+  private pendingCommand: Promise<void> = Promise.resolve();
 
   private constructor(
     private readonly persistence: PersistenceAdapter,
@@ -146,13 +185,25 @@ export class FamilyHabitModule {
     passwordHasher: PasswordHasher,
   ): Promise<FamilyHabitModule> {
     const stored = await persistence.load();
-    const state: FamilyState = stored ?? {
-      schemaVersion: 1,
+    if (stored !== null && (stored.schemaVersion < 1 || stored.schemaVersion > 2
+      || (stored.templateSeedVersion ?? 0) > TEMPLATE_SEED_VERSION)) {
+      throw new Error('家庭数据版本不兼容，请使用对应版本的应用。');
+    }
+    const state: FamilyState = stored === null ? {
+      schemaVersion: 2,
       revision: 1,
       children: INITIAL_CHILDREN.map((child) => ({ ...child })),
       parentCredential: null,
-    };
-    if (stored === null) await persistence.save(state);
+    } : cloneState(stored);
+    if (stored === null || state.schemaVersion === 1 || (state.templateSeedVersion ?? 0) < TEMPLATE_SEED_VERSION) {
+      state.schemaVersion = 2;
+      state.taskPool = state.taskPool ?? [];
+      if ((state.templateSeedVersion ?? 0) < 1) {
+        state.taskTemplates = builtInTemplates();
+        state.templateSeedVersion = 1;
+      }
+      await persistence.save(state);
+    }
     return new FamilyHabitModule(persistence, passwordHasher, state);
   }
 
@@ -204,7 +255,13 @@ export class FamilyHabitModule {
     return { ok: true, value: session };
   }
 
-  async execute(
+  async execute(token: string, command: DomainCommand): Promise<Result<ExecuteReceipt>> {
+    const result = this.pendingCommand.then(() => this.executeCommand(token, command));
+    this.pendingCommand = result.then(() => {}, () => {});
+    return result;
+  }
+
+  private async executeCommand(
     token: string,
     command: DomainCommand,
   ): Promise<Result<ExecuteReceipt>> {
@@ -216,7 +273,7 @@ export class FamilyHabitModule {
       };
     }
     if (
-      session.role === 'child'
+      session.role !== 'parent'
       && command.type !== 'set-parent-password'
     ) {
       return {
@@ -270,12 +327,74 @@ export class FamilyHabitModule {
       this.state = nextState;
       return { ok: true, value: { revision: nextState.revision } };
     }
+    if (command.type === 'disable-task-pool-task') {
+      const nextState = cloneState(this.state);
+      const task = (nextState.taskPool ?? []).find(item => item.id === command.taskId && item.childId === command.childId);
+      if (task === undefined) return { ok: false, error: { code: 'TASK_NOT_FOUND', message: '没有找到这个任务池任务。' } };
+      task.disabled = true;
+      nextState.revision += 1;
+      return this.saveTaskState(nextState, task.id);
+    }
+    if (command.type === 'edit-task-pool-task') {
+      if (command.name.trim().length === 0) return { ok: false, error: { code: 'VALIDATION_FAILED', message: '请输入任务名称。' } };
+      const rules = command.defaultRules;
+      if (!Number.isSafeInteger(rules.completionPoints) || rules.completionPoints <= 0
+        || !Number.isSafeInteger(rules.deductionPoints) || rules.deductionPoints < 0
+        || (rules.streakCap !== null && (!Number.isSafeInteger(rules.streakCap) || rules.streakCap < 0))) {
+        return { ok: false, error: { code: 'VALIDATION_FAILED', message: '完成积分须为正整数，扣分值和连续奖励上限须为非负整数。' } };
+      }
+      if ((rules.missedPolicy !== 'no-points' && rules.missedPolicy !== 'deduct') || typeof rules.streakEnabled !== 'boolean') {
+        return { ok: false, error: { code: 'VALIDATION_FAILED', message: '请选择有效的未完成处理和连续奖励设置。' } };
+      }
+      const nextState = cloneState(this.state);
+      const task = (nextState.taskPool ?? []).find(item => item.id === command.taskId && item.childId === command.childId);
+      if (task === undefined) return { ok: false, error: { code: 'TASK_NOT_FOUND', message: '没有找到这个任务池任务。' } };
+      task.name = command.name.trim();
+      task.description = command.description;
+      task.defaultRules = { ...command.defaultRules };
+      nextState.revision += 1;
+      return this.saveTaskState(nextState, task.id);
+    }
+    if (command.type === 'copy-task-template') {
+      if (!this.state.children.some(child => child.id === command.childId)) {
+        return { ok: false, error: { code: 'CHILD_NOT_FOUND', message: '没有找到这个孩子账套。' } };
+      }
+      const source = (this.state.taskTemplates ?? []).find(item => item.id === command.templateId);
+      if (source === undefined) return { ok: false, error: { code: 'TEMPLATE_NOT_FOUND', message: '没有找到这个任务模板。' } };
+      const nextState = cloneState(this.state);
+      nextState.revision += 1;
+      const task: TaskPoolTask = {
+        id: `task-${nextState.revision}`, childId: command.childId,
+        sourceTemplateId: source.id, name: source.name, description: source.description,
+        defaultRules: { ...source.defaultRules }, disabled: false,
+      };
+      nextState.taskPool = [...(nextState.taskPool ?? []), task];
+      return this.saveTaskState(nextState, task.id);
+    }
     return {
       ok: false,
       error: { code: 'COMMAND_UNSUPPORTED', message: '暂不支持此操作。' },
     };
   }
 
+  private async saveTaskState(nextState: FamilyState, taskId: string): Promise<Result<ExecuteReceipt>> {
+    try {
+      await this.persistence.save(nextState);
+    } catch (_) {
+      return { ok: false, error: { code: 'PERSISTENCE_FAILED', message: '保存失败，请稍后重试。' } };
+    }
+    this.state = nextState;
+    return { ok: true, value: { revision: nextState.revision, taskId } };
+  }
+
+  async inspect(
+    token: string,
+    request: { type: 'task-pool'; childId: ChildId },
+  ): Promise<Result<TaskPoolSnapshot>>;
+  async inspect(
+    token: string,
+    request: { type: 'task-templates'; stage: TaskStage },
+  ): Promise<Result<TemplateSnapshot>>;
   async inspect(
     token: string,
     request: { type: 'family-overview' },
@@ -291,6 +410,20 @@ export class FamilyHabitModule {
         ok: false,
         error: { code: 'SESSION_INVALID', message: '会话无效，请重新进入。' },
       };
+    }
+    if (request.type === 'task-pool') {
+      if (session.role !== 'parent' && (session.role !== 'child' || session.childId !== request.childId)) {
+        return { ok: false, error: { code: 'PERMISSION_DENIED', message: '请从对应孩子入口查看任务池。' } };
+      }
+      const child = this.state.children.find(item => item.id === request.childId);
+      if (child === undefined) return { ok: false, error: { code: 'CHILD_NOT_FOUND', message: '没有找到这个孩子账套。' } };
+      return { ok: true, value: {
+        currentChild: { ...child }, revision: this.state.revision,
+        tasks: (this.state.taskPool ?? []).filter(item => item.childId === child.id).map(cloneTask),
+      } };
+    }
+    if (request.type === 'task-templates') {
+      return { ok: true, value: { templates: (this.state.taskTemplates ?? []).filter(item => item.stage === request.stage).map(item => ({ ...item, defaultRules: { ...item.defaultRules } })) } };
     }
     if (request.type === 'family-overview') {
       return {
@@ -315,7 +448,7 @@ export class FamilyHabitModule {
         ok: true,
         value: {
           currentChild: { ...child },
-          tasks: [],
+          tasks: (this.state.taskPool ?? []).filter(item => item.childId === child.id).map(cloneTask),
           goals: [],
           revision: this.state.revision,
         },
