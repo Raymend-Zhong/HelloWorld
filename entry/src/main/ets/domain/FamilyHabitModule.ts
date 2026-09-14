@@ -659,7 +659,7 @@ export class FamilyHabitModule {
             && checkin.childId === childId
             && checkin.taskId === task.taskId
             && checkin.businessDate === businessDate).length;
-          results.push(this.buildTaskResult(task, completedCount));
+          results.push(this.buildTaskResult(task, completedCount > 0, completedCount));
           continue;
         }
         const bounds = weekBounds(businessDate);
@@ -667,10 +667,10 @@ export class FamilyHabitModule {
         if (checkins.length >= plan.requiredCount) {
           const beforeToday = checkins.filter(checkin => checkin.businessDate < businessDate).length;
           if (beforeToday < plan.requiredCount) {
-            results.push(this.buildTaskResult(task, checkins.length));
+            results.push(this.buildTaskResult(task, true, checkins.length));
           }
         } else if (businessDate === bounds.end) {
-          results.push(this.buildTaskResult(task, checkins.length));
+          results.push(this.buildTaskResult(task, false, checkins.length));
         }
       }
       if (results.length === 0) continue;
@@ -686,8 +686,8 @@ export class FamilyHabitModule {
     return { childId, businessDate, goals, revision: state.revision };
   }
 
-  private buildTaskResult(task: Goal['tasks'][number], completedCount: number): SettlementTaskResult {
-    if (completedCount > 0) {
+  private buildTaskResult(task: Goal['tasks'][number], completed: boolean, completedCount: number): SettlementTaskResult {
+    if (completed) {
       const streakBonus = task.rules.streakEnabled
         ? Math.min(
           task.rules.streakCap ?? Number.MAX_SAFE_INTEGER,
@@ -704,7 +704,7 @@ export class FamilyHabitModule {
     return {
       taskId: task.taskId,
       status: 'missed',
-      completedCount: 0,
+      completedCount,
       pointsDelta: task.rules.missedPolicy === 'deduct' ? -task.rules.deductionPoints : 0,
     };
   }

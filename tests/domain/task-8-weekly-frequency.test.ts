@@ -144,3 +144,74 @@ test('[TASK-8-S02][AC-18] 频率任务达标前不计分且达标后本周期超
   })).goals, []);
   assert.equal(value(await module.inspect(parent.token, { type: 'goal-detail', childId: 'guoguo', goalId })).goal.points, 6);
 });
+
+test('[TASK-8-S03][AC-19] 频率任务到周日仍未达标时产生一次未完成结果并中断连续周期', async () => {
+  const { module, parent, child, taskId } = await family();
+  const goalId = value(await module.execute(parent.token, {
+    type: 'create-goal',
+    childId: 'guoguo',
+    businessDate: '2026-09-14',
+    name: '每周阅读',
+    description: '自然周内两次达标',
+    threshold: 100,
+    plannedDays: 30,
+    reward: '买书',
+    activityId: 'tree',
+    tasks: [{
+      taskId,
+      plan: { kind: 'weekly-frequency', requiredCount: 2 },
+      rules: {
+        completionPoints: 5,
+        missedPolicy: 'deduct',
+        deductionPoints: 2,
+        streakEnabled: true,
+        streakCap: null,
+      },
+    }],
+  })).goalId!;
+
+  for (const businessDate of ['2026-09-14', '2026-09-15']) {
+    value(await module.execute(child.token, { type: 'submit-checkin', childId: 'guoguo', taskId, businessDate }));
+  }
+  let preview = value(await module.inspect(parent.token, {
+    type: 'settlement-preview',
+    childId: 'guoguo',
+    businessDate: '2026-09-15',
+  }));
+  assert.equal(preview.goals[0]?.results[0]?.pointsDelta, 5);
+  value(await module.execute(parent.token, {
+    type: 'confirm-settlement',
+    childId: 'guoguo',
+    businessDate: '2026-09-15',
+    expectedRevision: preview.revision,
+  }));
+
+  value(await module.execute(child.token, { type: 'submit-checkin', childId: 'guoguo', taskId, businessDate: '2026-09-21' }));
+  preview = value(await module.inspect(parent.token, {
+    type: 'settlement-preview',
+    childId: 'guoguo',
+    businessDate: '2026-09-27',
+  }));
+  assert.deepEqual(preview.goals, [{
+    goalId,
+    results: [{ taskId, status: 'missed', completedCount: 1, pointsDelta: -2 }],
+    netDelta: -2,
+    pointsBefore: 5,
+    pointsAfter: 3,
+  }]);
+  value(await module.execute(parent.token, {
+    type: 'confirm-settlement',
+    childId: 'guoguo',
+    businessDate: '2026-09-27',
+    expectedRevision: preview.revision,
+  }));
+
+  value(await module.execute(child.token, { type: 'submit-checkin', childId: 'guoguo', taskId, businessDate: '2026-09-28' }));
+  value(await module.execute(child.token, { type: 'submit-checkin', childId: 'guoguo', taskId, businessDate: '2026-09-29' }));
+  preview = value(await module.inspect(parent.token, {
+    type: 'settlement-preview',
+    childId: 'guoguo',
+    businessDate: '2026-09-29',
+  }));
+  assert.equal(preview.goals[0]?.results[0]?.pointsDelta, 5);
+});
