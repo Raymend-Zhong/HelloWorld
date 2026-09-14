@@ -90,10 +90,13 @@ test('[TASK-9-UI01][AC-20][AC-31] ArkUI 提供豁免与清算审阅过期处理�
   const selectors = [
     'settlement-exempt-date-',
     'settlement-exempt-weekly-',
+    'settlement-exempt-all-date',
     'settlement-message',
   ];
 
   assert.match(source, /已豁免/);
+  assert.match(source, /全部任务豁免/);
+  assert.match(source, /周期任务豁免/);
   assert.match(source, /清算审阅已过期/);
   for (const selector of selectors) {
     assert.match(source, new RegExp(selector));

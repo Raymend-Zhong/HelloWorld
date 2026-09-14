@@ -50,14 +50,14 @@ async function settle(
   }));
 }
 
-test('[TASK-9-S01][AC-20] 日期任务豁免不奖扣且不推进或中断连续记录', async () => {
+test('[TASK-9-S01][AC-20] 任务豁免不奖扣且不推进或中断连续记录', async () => {
   const { module, parent, child, taskId } = await family();
   const goalId = value(await module.execute(parent.token, {
     type: 'create-goal',
     childId: 'guoguo',
     businessDate: '2026-09-14',
     name: '连续数学',
-    description: '验证日期豁免',
+    description: '验证任务豁免',
     threshold: 100,
     plannedDays: 30,
     reward: '奖励',
@@ -81,7 +81,7 @@ test('[TASK-9-S01][AC-20] 日期任务豁免不奖扣且不推进或中断连续
   }));
   assert.deepEqual(exemptPreview.goals, [{
     goalId,
-    results: [{ taskId, status: 'exempted', completedCount: 0, pointsDelta: 0 }],
+    results: [{ taskId, planKind: 'date-weekdays', status: 'exempted', completedCount: 0, pointsDelta: 0 }],
     netDelta: 0,
     pointsBefore: 10,
     pointsAfter: 10,
@@ -104,7 +104,7 @@ test('[TASK-9-S02][AC-20] 周期任务豁免覆盖整个自然周且不改变连
     childId: 'guoguo',
     businessDate: '2026-09-14',
     name: '每周练习',
-    description: '验证周期豁免',
+    description: '验证周期任务豁免',
     threshold: 100,
     plannedDays: 30,
     reward: '奖励',
@@ -133,7 +133,7 @@ test('[TASK-9-S02][AC-20] 周期任务豁免覆盖整个自然周且不改变连
   }));
   assert.deepEqual(exemptPreview.goals, [{
     goalId,
-    results: [{ taskId, status: 'exempted', completedCount: 0, pointsDelta: 0 }],
+    results: [{ taskId, planKind: 'weekly-frequency', status: 'exempted', completedCount: 0, pointsDelta: 0 }],
     netDelta: 0,
     pointsBefore: 8,
     pointsAfter: 8,
@@ -289,4 +289,56 @@ test('[TASK-9-S04][AC-20] 日期任务和频率任务只能使用对应豁免方
   assert.equal(invalidDate.ok, false);
   if (!invalidDate.ok) assert.equal(invalidDate.error.code, 'PLAN_NOT_APPLICABLE');
   assert.equal(value(await module.inspect(parent.token, { type: 'family-overview' })).revision, before);
+});
+
+test('[TASK-9-S05][AC-20] 家长可以一次豁免孩子当天全部按日期任务', async () => {
+  const { module, parent, taskId } = await family();
+  const readingTaskId = value(await module.execute(parent.token, {
+    type: 'copy-task-template',
+    childId: 'guoguo',
+    templateId: 'junior-reading',
+  })).taskId!;
+  const weeklyTaskId = value(await module.execute(parent.token, {
+    type: 'copy-task-template',
+    childId: 'guoguo',
+    templateId: 'junior-english',
+  })).taskId!;
+  const goalId = value(await module.execute(parent.token, {
+    type: 'create-goal',
+    childId: 'guoguo',
+    businessDate: '2026-09-14',
+    name: '全部任务豁免目标',
+    description: '验证当天全部任务豁免',
+    threshold: 100,
+    plannedDays: 30,
+    reward: '奖励',
+    activityId: 'cat',
+    tasks: [
+      { taskId, weekdays: [1], rules: { completionPoints: 5, missedPolicy: 'deduct', deductionPoints: 2, streakEnabled: false, streakCap: null } },
+      { taskId: readingTaskId, weekdays: [1], rules: { completionPoints: 6, missedPolicy: 'deduct', deductionPoints: 3, streakEnabled: false, streakCap: null } },
+      { taskId: weeklyTaskId, plan: { kind: 'weekly-frequency', requiredCount: 2 },
+        rules: { completionPoints: 7, missedPolicy: 'deduct', deductionPoints: 4, streakEnabled: false, streakCap: null } },
+    ],
+  })).goalId!;
+
+  value(await module.execute(parent.token, {
+    type: 'exempt-date-tasks',
+    childId: 'guoguo',
+    businessDate: '2026-09-14',
+  }));
+  const preview = value(await module.inspect(parent.token, {
+    type: 'settlement-preview',
+    childId: 'guoguo',
+    businessDate: '2026-09-14',
+  }));
+  assert.deepEqual(preview.goals, [{
+    goalId,
+    results: [
+      { taskId, planKind: 'date-weekdays', status: 'exempted', completedCount: 0, pointsDelta: 0 },
+      { taskId: readingTaskId, planKind: 'date-weekdays', status: 'exempted', completedCount: 0, pointsDelta: 0 },
+    ],
+    netDelta: 0,
+    pointsBefore: 0,
+    pointsAfter: 0,
+  }]);
 });

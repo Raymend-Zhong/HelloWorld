@@ -174,6 +174,21 @@ struct Index {
     await this.reviewSettlement();
   }
 
+  private async exemptAllDateTasks(): Promise<void> {
+    if (this.settlementPreview === null) return;
+    const saved = await this.module.execute(this.parentToken, {
+      type: 'exempt-date-tasks',
+      childId: this.settlementPreview.childId,
+      businessDate: this.settlementPreview.businessDate,
+    });
+    if (saved.ok === false) {
+      this.message = saved.error.message;
+      return;
+    }
+    this.message = '已豁免当天全部按日期任务，请重新审阅后确认清算。';
+    await this.reviewSettlement();
+  }
+
   private settlementResultLabel(result: SettlementTaskResult): string {
     if (result.status === 'completed') return '已完成';
     if (result.status === 'exempted') return '已豁免';
@@ -396,6 +411,7 @@ struct Index {
           .width(180)
           .onChange((value: string) => this.settlementDate = value)
         Button('审阅').id('settlement-review').onClick(() => this.reviewSettlement())
+        Button('全部任务豁免').id('settlement-exempt-all-date').onClick(() => this.exemptAllDateTasks())
       }
 
       Text(this.message).id('settlement-message').fontSize(18).fontColor('#8A5C45')
@@ -415,11 +431,13 @@ struct Index {
                       .id(`settlement-result-${goal.goalId}-${result.taskId}`)
                       .fontSize(17)
                       .layoutWeight(1)
-                    if (result.status === 'missed') {
-                      Button('日期豁免')
+                    if (result.status === 'missed' && result.planKind === 'date-weekdays') {
+                      Button('任务豁免')
                         .id(`settlement-exempt-date-${goal.goalId}-${result.taskId}`)
                         .onClick(() => this.exemptSettlementResult(result, false))
-                      Button('周期豁免')
+                    }
+                    if (result.status === 'missed' && result.planKind === 'weekly-frequency') {
+                      Button('周期任务豁免')
                         .id(`settlement-exempt-weekly-${goal.goalId}-${result.taskId}`)
                         .onClick(() => this.exemptSettlementResult(result, true))
                     }

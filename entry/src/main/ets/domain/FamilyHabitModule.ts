@@ -43,15 +43,22 @@ export interface SettlementRecord {
   active: boolean;
 }
 
-export interface TaskExemption {
-  id: string;
-  childId: ChildId;
-  taskId: string;
-  kind: 'date' | 'weekly';
-  businessDate?: string;
-  weekStart?: string;
-  weekEnd?: string;
-}
+export type TaskExemption =
+  | {
+    id: string;
+    childId: ChildId;
+    taskId: string;
+    kind: 'date';
+    businessDate: string;
+  }
+  | {
+    id: string;
+    childId: ChildId;
+    taskId: string;
+    kind: 'weekly';
+    weekStart: string;
+    weekEnd: string;
+  };
 
 export interface FamilyState {
   exemptions?: TaskExemption[];
@@ -118,6 +125,7 @@ export type DomainCommand =
   | EditGoalCommand
   | CreateGoalCommand
   | { type: 'exempt-date-task'; childId: ChildId; taskId: string; businessDate: string }
+  | { type: 'exempt-date-tasks'; childId: ChildId; businessDate: string }
   | { type: 'exempt-weekly-task'; childId: ChildId; taskId: string; weekOf: string }
   | { type: 'revoke-checkin'; childId: ChildId; checkinId: string }
   | { type: 'submit-checkin'; childId: ChildId; taskId: string; businessDate: string }
@@ -146,6 +154,7 @@ export interface GoalList { goals: Goal[]; revision: number; }
 export interface GoalDetail { goal: Goal; revision: number; }
 export interface SettlementTaskResult {
   taskId: string;
+  planKind: 'date-weekdays' | 'weekly-frequency';
   status: 'completed' | 'missed' | 'exempted';
   completedCount: number;
   pointsDelta: number;
@@ -581,6 +590,37 @@ export class FamilyHabitModule {
       }];
       return this.saveState(nextState);
     }
+    if (command.type === 'exempt-date-tasks') {
+      if (!validBusinessDate(command.businessDate)) {
+        return { ok: false, error: { code: 'VALIDATION_FAILED', field: 'businessDate', message: '请选择有效的业务日期。' } };
+      }
+      if ((this.state.settlements ?? []).some(settlement => settlement.active
+        && settlement.childId === command.childId
+        && settlement.businessDate === command.businessDate)) {
+        return { ok: false, error: { code: 'DATE_ALREADY_SETTLED', message: '该日期已经清算。' } };
+      }
+      const taskIds = this.applicableDateTaskIds(this.state, command.childId, command.businessDate);
+      if (taskIds.length === 0) {
+        return { ok: false, error: { code: 'PLAN_NOT_APPLICABLE', message: '这一天没有可豁免的按日期任务。' } };
+      }
+      const nextState = cloneState(this.state);
+      nextState.revision += 1;
+      const existing = (nextState.exemptions ?? []).filter(exemption => !(exemption.childId === command.childId
+        && exemption.kind === 'date'
+        && exemption.businessDate === command.businessDate
+        && taskIds.includes(exemption.taskId)));
+      nextState.exemptions = [
+        ...existing,
+        ...taskIds.map(taskId => ({
+          id: `exemption-${nextState.revision}-${taskId}`,
+          childId: command.childId,
+          taskId,
+          kind: 'date' as const,
+          businessDate: command.businessDate,
+        })),
+      ];
+      return this.saveState(nextState);
+    }
     if (command.type === 'exempt-weekly-task') {
       if (!validBusinessDate(command.weekOf)) {
         return { ok: false, error: { code: 'VALIDATION_FAILED', field: 'weekOf', message: '请选择有效的业务日期。' } };
@@ -746,20 +786,20 @@ export class FamilyHabitModule {
         if (plan.kind === 'date-weekdays') {
           if (!plan.weekdays.includes(weekday)) continue;
           if (this.hasDateExemption(state, childId, task.taskId, businessDate)) {
-            results.push(this.buildExemptedTaskResult(task.taskId));
+            results.push(this.buildExemptedTaskResult(task.taskId, plan.kind));
             continue;
           }
           const completedCount = (state.checkins ?? []).filter(checkin => checkin.active
             && checkin.childId === childId
             && checkin.taskId === task.taskId
             && checkin.businessDate === businessDate).length;
-          results.push(this.buildTaskResult(task, completedCount > 0, completedCount));
+          results.push(this.buildTaskResult(task, plan.kind, completedCount > 0, completedCount));
           continue;
         }
         const bounds = weekBounds(businessDate);
         if (this.hasWeeklyExemption(state, childId, task.taskId, bounds.start, bounds.end)) {
           if (businessDate === bounds.end) {
-            results.push(this.buildExemptedTaskResult(task.taskId));
+            results.push(this.buildExemptedTaskResult(task.taskId, plan.kind));
           }
           continue;
         }
@@ -767,10 +807,10 @@ export class FamilyHabitModule {
         if (checkins.length >= plan.requiredCount) {
           const beforeToday = checkins.filter(checkin => checkin.businessDate < businessDate).length;
           if (beforeToday < plan.requiredCount) {
-            results.push(this.buildTaskResult(task, true, checkins.length));
+            results.push(this.buildTaskResult(task, plan.kind, true, checkins.length));
           }
         } else if (businessDate === bounds.end) {
-          results.push(this.buildTaskResult(task, false, checkins.length));
+          results.push(this.buildTaskResult(task, plan.kind, false, checkins.length));
         }
       }
       if (results.length === 0) continue;
@@ -811,6 +851,18 @@ export class FamilyHabitModule {
       }));
   }
 
+  private applicableDateTaskIds(state: FamilyState, childId: ChildId, businessDate: string): string[] {
+    const weekday = new Date(`${businessDate}T00:00:00.000Z`).getUTCDay() || 7;
+    return [...new Set((state.goals ?? [])
+      .filter(goal => goal.childId === childId && goal.status === 'active' && goal.startDate <= businessDate)
+      .flatMap(goal => goal.tasks)
+      .filter(task => {
+        const plan = task.plan ?? { kind: 'date-weekdays' as const, weekdays: task.weekdays };
+        return plan.kind === 'date-weekdays' && plan.weekdays.includes(weekday);
+      })
+      .map(task => task.taskId))];
+  }
+
   private hasWeeklyExemption(state: FamilyState, childId: ChildId, taskId: string, weekStart: string, weekEnd: string): boolean {
     return (state.exemptions ?? []).some(exemption => exemption.kind === 'weekly'
       && exemption.childId === childId
@@ -819,16 +871,22 @@ export class FamilyHabitModule {
       && exemption.weekEnd === weekEnd);
   }
 
-  private buildExemptedTaskResult(taskId: string): SettlementTaskResult {
+  private buildExemptedTaskResult(taskId: string, planKind: SettlementTaskResult['planKind']): SettlementTaskResult {
     return {
       taskId,
+      planKind,
       status: 'exempted',
       completedCount: 0,
       pointsDelta: 0,
     };
   }
 
-  private buildTaskResult(task: Goal['tasks'][number], completed: boolean, completedCount: number): SettlementTaskResult {
+  private buildTaskResult(
+    task: Goal['tasks'][number],
+    planKind: SettlementTaskResult['planKind'],
+    completed: boolean,
+    completedCount: number,
+  ): SettlementTaskResult {
     if (completed) {
       const streakBonus = task.rules.streakEnabled
         ? Math.min(
@@ -838,6 +896,7 @@ export class FamilyHabitModule {
         : 0;
       return {
         taskId: task.taskId,
+        planKind,
         status: 'completed',
         completedCount,
         pointsDelta: task.rules.completionPoints + streakBonus,
@@ -845,6 +904,7 @@ export class FamilyHabitModule {
     }
     return {
       taskId: task.taskId,
+      planKind,
       status: 'missed',
       completedCount,
       pointsDelta: task.rules.missedPolicy === 'deduct' ? -task.rules.deductionPoints : 0,
