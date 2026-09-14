@@ -429,6 +429,8 @@ ArkData 本地关系型数据库是业务数据的唯一权威来源。界面状
 
 ## 十三、HarmonyOS 兼容性与运行约束
 
+> 2026-09-14 用户确认：当前及后续任务均不再要求 HarmonyOS 6.1 专项兼容测试，也不以缺少该版本测试作为验收阻塞。其他功能、持久化、界面测试及实际设备验证要求保持有效。
+
 - 使用普通 HarmonyOS 应用、ArkTS、ArkUI Stage 模型和单 Entry HAP。
 - 使用 ArkData relationalStore 保存权威业务数据。
 - 兼容目标必须覆盖实机 HarmonyOS 6.1.0 对应的 API 版本；工程建立时由 DevEco Studio 连接实机确认 API level。

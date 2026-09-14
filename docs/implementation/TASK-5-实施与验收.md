@@ -115,3 +115,11 @@ hdc shell aa test -b com.raymend.familyhabit -m entry_test -s unittest OpenHarmo
 - 真机 TASK-5-UI01 / TASK-5-DB01 最终补跑：2 项，失败 0、错误 0、通过 2。
 - 独立规范复查确认校验条件等价，未改变任务池校验顺序、目标规则可选语义、错误文案或字段定位。
 - 仍未获得 HarmonyOS 6.1 兼容验收证据；当前真机结果不能替代该版本验证。
+
+## 关闭决定
+
+2026-09-14 用户明确取消当前及后续任务的 HarmonyOS 6.1 专项兼容测试要求，不再将此项作为验收阻塞。其他测试要求保持有效。
+
+#5 本票范围全部完成：AC-09～12，以及 #4 移交的 AC-08 引用行为；实现、重构、独立审查与最终真机验证均已完成。用户已授权关闭 #5。
+
+完成提交：8034be2c2bfafbdf12ebbf316f967dab8893b6f7、2daafb5e9c2e4b132ff4aab43ca3b2a0ca135930、5af84adffffb19f9926937c99278becfe86d4e5c。提交保存在本地分支 codex/TASK-5-date-goals，未据此声明已推送或合并。
