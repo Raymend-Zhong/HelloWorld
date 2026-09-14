@@ -65,6 +65,12 @@ export struct GoalPanel {
 
   private weekdayName(day: number): string { return ['一', '二', '三', '四', '五', '六', '日'][day - 1]; }
 
+  private statusName(goal: Goal): string {
+    if (goal.status === 'achieved') return '已达成';
+    if (goal.status === 'terminated') return '已终止';
+    return '进行中';
+  }
+
   private beginEdit(goal: Goal | null): void {
     this.editingId = goal?.id ?? '';
     this.name = goal?.name ?? '';
@@ -121,6 +127,23 @@ export struct GoalPanel {
     if (result.value.goalId !== undefined) await this.showDetail(result.value.goalId);
   }
 
+  private async terminateGoal(): Promise<void> {
+    if (this.detail === null || this.busy) return;
+    this.busy = true;
+    const result = await this.module.execute(this.parentToken, {
+      type: 'terminate-goal',
+      childId: this.childId,
+      goalId: this.detail.id,
+    });
+    this.busy = false;
+    if (result.ok === false) {
+      this.message = result.error.message;
+      return;
+    }
+    await this.load(this.childId);
+    await this.showDetail(this.detail.id);
+  }
+
   @Builder
   private Error(field: string) {
     if (this.errorField === field) {
@@ -143,7 +166,7 @@ export struct GoalPanel {
           Column({ space: 8 }) {
             Button(goal.name).id(`goal-open-${goal.id}`).width('100%').height(52)
               .fontSize(22).backgroundColor('#F4E9DB').fontColor('#3E352F').onClick(() => this.showDetail(goal.id))
-            Text(`进行中 · ${goal.points} / ${goal.threshold} 分`).fontSize(18)
+            Text(`${this.statusName(goal)} · ${goal.points} / ${goal.threshold} 分`).id(`goal-status-${goal.id}`).fontSize(18)
             Text(`${this.activityName(goal.activityId)} · 奖励：${goal.reward}`).fontSize(17)
           }.width('100%').padding(16).backgroundColor(Color.White).borderRadius(16)
         }, (goal: Goal) => goal.id)
@@ -206,31 +229,39 @@ export struct GoalPanel {
   }
 
   @Builder
+  private GoalDetail(goal: Goal) {
+    Scroll() {
+      Column({ space: 16 }) {
+        Text(goal.name).id('goal-detail').fontSize(28).fontWeight(FontWeight.Bold)
+        Text(`${this.statusName(goal)} · ${goal.points} / ${goal.threshold} 分`).id(`goal-status-${goal.id}`).fontSize(23)
+        Text(goal.description).fontSize(18)
+        Text(`开始日期：${goal.startDate} · 计划 ${goal.plannedDays} 天`).fontSize(18)
+        Text(`目标奖励：${goal.reward}`).fontSize(21)
+        Text(this.activityName(goal.activityId)).fontSize(22)
+        Text(`历史最高积分：${goal.highestPoints}`).fontSize(17)
+        ForEach(goal.tasks, (task: GoalTask) => {
+          Column({ space: 8 }) {
+            Text(this.taskName(task.taskId)).fontSize(21)
+            Text(`每周${task.weekdays.map(day => this.weekdayName(day)).join('、')}`).fontSize(17)
+            Text(`完成 ${task.rules.completionPoints} 分 · 未完成${task.rules.missedPolicy === 'deduct' ? `扣 ${task.rules.deductionPoints} 分` : '不得分'}`).fontSize(17)
+            Text(task.rules.streakEnabled ? `连续奖励开启 · 已连续 ${task.streakCount} 次 · 上限${task.rules.streakCap === null ? '不限' : task.rules.streakCap}` : '连续奖励关闭')
+              .id(`goal-streak-${goal.id}-${task.taskId}`)
+              .fontSize(17)
+          }.width('100%').padding(16).backgroundColor(Color.White).borderRadius(16)
+        }, (task: GoalTask) => task.taskId)
+      }.width('100%').padding({ bottom: 24 })
+    }.layoutWeight(1).width('100%')
+    Row({ space: 16 }) {
+      Button('返回目标列表').id('goal-detail-back').onClick(() => this.view = 'list')
+      Button('编辑目标').id('goal-edit').enabled(goal.status === 'active').onClick(() => this.beginEdit(goal))
+      Button('终止目标').id(`goal-terminate-${goal.id}`).enabled(!this.busy && goal.status === 'active').onClick(() => this.terminateGoal())
+    }
+  }
+
+  @Builder
   private Detail() {
     if (this.detail !== null) {
-      Scroll() {
-        Column({ space: 16 }) {
-          Text(this.detail.name).id('goal-detail').fontSize(28).fontWeight(FontWeight.Bold)
-          Text(`进行中 · ${this.detail.points} / ${this.detail.threshold} 分`).fontSize(23)
-          Text(this.detail.description).fontSize(18)
-          Text(`开始日期：${this.detail.startDate} · 计划 ${this.detail.plannedDays} 天`).fontSize(18)
-          Text(`目标奖励：${this.detail.reward}`).fontSize(21)
-          Text(this.activityName(this.detail.activityId)).fontSize(22)
-          Text(`历史最高积分：${this.detail.highestPoints}`).fontSize(17)
-          ForEach(this.detail.tasks, (task: GoalTask) => {
-            Column({ space: 8 }) {
-              Text(this.taskName(task.taskId)).fontSize(21)
-              Text(`每周${task.weekdays.map(day => this.weekdayName(day)).join('、')}`).fontSize(17)
-              Text(`完成 ${task.rules.completionPoints} 分 · 未完成${task.rules.missedPolicy === 'deduct' ? `扣 ${task.rules.deductionPoints} 分` : '不得分'}`).fontSize(17)
-              Text(task.rules.streakEnabled ? `连续奖励开启 · 上限${task.rules.streakCap === null ? '不限' : task.rules.streakCap}` : '连续奖励关闭').fontSize(17)
-            }.width('100%').padding(16).backgroundColor(Color.White).borderRadius(16)
-          }, (task: GoalTask) => task.taskId)
-        }.width('100%').padding({ bottom: 24 })
-      }.layoutWeight(1).width('100%')
-      Row({ space: 16 }) {
-        Button('返回目标列表').id('goal-detail-back').onClick(() => this.view = 'list')
-        Button('编辑目标').id('goal-edit').onClick(() => this.beginEdit(this.detail))
-      }
+      this.GoalDetail(this.detail)
     }
   }
 

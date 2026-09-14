@@ -20,20 +20,21 @@ export interface GoalTask {
   taskId: string;
   weekdays: number[];
   rules: TaskRules;
+  streakCount: number;
 }
 
 export interface Goal extends GoalInput {
   id: string;
   childId: 'guoguo' | 'yangyang';
   startDate: string;
-  status: 'active';
+  status: 'active' | 'achieved' | 'terminated';
   points: number;
   highestPoints: number;
   tasks: GoalTask[];
 }
 
 export function cloneGoal(goal: Goal): Goal {
-  return { ...goal, tasks: goal.tasks.map(task => ({ ...task, weekdays: [...task.weekdays], rules: { ...task.rules } })) };
+  return { ...goal, tasks: goal.tasks.map(task => ({ ...task, weekdays: [...task.weekdays], rules: { ...task.rules }, streakCount: task.streakCount ?? 0 })) };
 }
 
 export interface GoalValidationError {

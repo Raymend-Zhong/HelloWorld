@@ -34,7 +34,7 @@ export default function goalPersistenceTest(): void {
         };
         await adapter.save(old);
         const module = await FamilyHabitModule.create(adapter, hasher);
-        expect((await adapter.load())?.schemaVersion).assertEqual(4);
+        expect((await adapter.load())?.schemaVersion).assertEqual(5);
         const parent = await module.openSession({ entry: 'parent', password: '2468' });
         expect(parent.ok).assertTrue();
         if (parent.ok === false) return;

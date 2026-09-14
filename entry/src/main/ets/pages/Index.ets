@@ -8,6 +8,8 @@ import {
   FamilyHabitModule,
   ParentSetupSession,
   SettlementPreview,
+  SettlementGoalPreview,
+  SettlementTaskResult,
 } from '../domain/FamilyHabitModule';
 
 type Screen = 'entry' | 'child' | 'parent-auth' | 'parent' | 'task-pool' | 'goals' | 'settlement';
@@ -367,17 +369,17 @@ struct Index {
             Text('这一天没有需要清算的按日期任务。').fontSize(20)
           }
           if (this.settlementPreview !== null) {
-            ForEach(this.settlementPreview.goals, (goal) => {
+            ForEach(this.settlementPreview.goals, (goal: SettlementGoalPreview) => {
               Column({ space: 8 }) {
                 Text(`目标 ${goal.goalId}`).fontSize(20).fontWeight(FontWeight.Bold)
-                ForEach(goal.results, (result) => {
+                ForEach(goal.results, (result: SettlementTaskResult) => {
                   Text(`${result.status === 'completed' ? '已完成' : '未完成'} · ${result.taskId} · ${result.pointsDelta} 分`)
                     .id(`settlement-result-${goal.goalId}-${result.taskId}`)
                     .fontSize(17)
-                }, (result) => result.taskId)
+                }, (result: SettlementTaskResult) => result.taskId)
                 Text(`净变化 ${goal.netDelta} 分，清算后 ${goal.pointsAfter} 分`).id(`settlement-net-${goal.goalId}`).fontSize(18)
               }.width('100%').padding(14).backgroundColor(Color.White).borderRadius(12)
-            }, (goal) => goal.goalId)
+            }, (goal: SettlementGoalPreview) => goal.goalId)
           }
         }.width('100%')
       }.layoutWeight(1).width('100%')

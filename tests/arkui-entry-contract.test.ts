@@ -54,3 +54,17 @@ test('[TASK-6-UI01][AC-13][AC-29][AC-30] ArkUI 提供打卡撤销与每日清算
     assert.match(source, new RegExp(selector));
   }
 });
+
+test('[TASK-7-UI01][AC-38][AC-40] ArkUI 提供目标结束状态和终止操作稳定选择器', async () => {
+  const source = await readFile(new URL('../entry/src/main/ets/pages/GoalPanel.ets', import.meta.url), 'utf8');
+  const selectors = [
+    'goal-status-',
+    'goal-streak-',
+    'goal-terminate-',
+    'goal-edit',
+  ];
+
+  for (const selector of selectors) {
+    assert.match(source, new RegExp(selector));
+  }
+});

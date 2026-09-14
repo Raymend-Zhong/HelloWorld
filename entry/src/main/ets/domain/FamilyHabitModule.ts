@@ -115,6 +115,7 @@ export type DomainCommand =
   | { type: 'manage-task-pool' }
   | { type: 'manage-goal' }
   | { type: 'exempt-task' }
+  | { type: 'terminate-goal'; childId: ChildId; goalId: string }
   | { type: 'confirm-settlement'; childId: ChildId; businessDate: string; expectedRevision: number };
 
 export interface ExecuteReceipt {
@@ -265,7 +266,7 @@ export class FamilyHabitModule {
     passwordHasher: PasswordHasher,
   ): Promise<FamilyHabitModule> {
     const stored = await persistence.load();
-    if (stored !== null && (stored.schemaVersion < 1 || stored.schemaVersion > 4
+    if (stored !== null && (stored.schemaVersion < 1 || stored.schemaVersion > 5
       || (stored.templateSeedVersion ?? 0) > TEMPLATE_SEED_VERSION)) {
       throw new Error('家庭数据版本不兼容，请使用对应版本的应用。');
     }
@@ -275,9 +276,14 @@ export class FamilyHabitModule {
       children: INITIAL_CHILDREN.map((child) => ({ ...child })),
       parentCredential: null,
     } : cloneState(stored);
-    if (stored === null || state.schemaVersion < 4 || (state.templateSeedVersion ?? 0) < TEMPLATE_SEED_VERSION) {
-      state.schemaVersion = 4;
+    if (stored === null || state.schemaVersion < 5 || (state.templateSeedVersion ?? 0) < TEMPLATE_SEED_VERSION) {
+      state.schemaVersion = 5;
       state.goals = state.goals ?? [];
+      for (const goal of state.goals) {
+        for (const task of goal.tasks) {
+          task.streakCount = task.streakCount ?? 0;
+        }
+      }
       state.checkins = state.checkins ?? [];
       state.settlements = state.settlements ?? [];
       state.taskPool = state.taskPool ?? [];
@@ -467,6 +473,12 @@ export class FamilyHabitModule {
         if (goal === undefined) continue;
         goal.points = goalPreview.pointsAfter;
         goal.highestPoints = Math.max(goal.highestPoints, goal.points);
+        if (goal.points >= goal.threshold) goal.status = 'achieved';
+        for (const result of goalPreview.results) {
+          const goalTask = goal.tasks.find(task => task.taskId === result.taskId);
+          if (goalTask === undefined || !goalTask.rules.streakEnabled) continue;
+          goalTask.streakCount = result.status === 'completed' ? (goalTask.streakCount ?? 0) + 1 : 0;
+        }
       }
       const settlement: SettlementRecord = {
         id: `settlement-${nextState.revision}`,
@@ -487,6 +499,9 @@ export class FamilyHabitModule {
     if (command.type === 'create-goal' || command.type === 'edit-goal') {
       const previous = command.type === 'edit-goal' ? (this.state.goals ?? []).find(goal => goal.id === command.goalId && goal.childId === command.childId) : undefined;
       if (command.type === 'edit-goal' && previous === undefined) return { ok: false, error: { code: 'GOAL_NOT_FOUND', message: '没有找到这个打卡目标。' } };
+      if (previous !== undefined && previous.status !== 'active') {
+        return { ok: false, error: { code: 'GOAL_ENDED', message: '目标已结束，不能直接编辑历史目标。' } };
+      }
       const invalid = validateGoal(command, command.businessDate);
       if (invalid !== null) return { ok: false, error: invalid };
       if (!this.state.children.some(child => child.id === command.childId)) {
@@ -505,13 +520,29 @@ export class FamilyHabitModule {
         startDate: previous?.startDate ?? command.businessDate, status: 'active', points: previous?.points ?? 0, highestPoints: previous?.highestPoints ?? 0,
         tasks: command.tasks.map(input => {
           const source = (this.state.taskPool ?? []).find(task => task.id === input.taskId)!;
-          return { taskId: input.taskId, weekdays: [...input.weekdays], rules: { ...(input.rules ?? previous?.tasks.find(task => task.taskId === input.taskId)?.rules ?? source.defaultRules) } };
+          const existing = previous?.tasks.find(task => task.taskId === input.taskId);
+          return {
+            taskId: input.taskId,
+            weekdays: [...input.weekdays],
+            rules: { ...(input.rules ?? existing?.rules ?? source.defaultRules) },
+            streakCount: existing?.streakCount ?? 0,
+          };
         }),
       };
+      if (goal.points >= goal.threshold) goal.status = 'achieved';
       nextState.goals = [...(nextState.goals ?? []).filter(item => item.id !== goal.id), goal];
       const saved = await this.saveState(nextState);
       if (!saved.ok) return saved;
       return { ok: true, value: { ...saved.value, goalId: goal.id } };
+    }
+    if (command.type === 'terminate-goal') {
+      const nextState = cloneState(this.state);
+      const goal = (nextState.goals ?? []).find(item => item.id === command.goalId && item.childId === command.childId);
+      if (goal === undefined) return { ok: false, error: { code: 'GOAL_NOT_FOUND', message: '没有找到这个打卡目标。' } };
+      if (goal.status !== 'active') return { ok: false, error: { code: 'GOAL_ENDED', message: '目标已结束，不能重复终止。' } };
+      goal.status = 'terminated';
+      nextState.revision += 1;
+      return this.saveState(nextState);
     }
     if (command.type === 'disable-task-pool-task') {
       const nextState = cloneState(this.state);
@@ -586,11 +617,17 @@ export class FamilyHabitModule {
           && checkin.taskId === task.taskId
           && checkin.businessDate === businessDate).length;
         if (completedCount > 0) {
+          const streakBonus = task.rules.streakEnabled
+            ? Math.min(
+              task.rules.streakCap ?? Number.MAX_SAFE_INTEGER,
+              task.streakCount ?? 0,
+            )
+            : 0;
           results.push({
             taskId: task.taskId,
             status: 'completed',
             completedCount,
-            pointsDelta: task.rules.completionPoints,
+            pointsDelta: task.rules.completionPoints + streakBonus,
           });
         } else {
           results.push({
