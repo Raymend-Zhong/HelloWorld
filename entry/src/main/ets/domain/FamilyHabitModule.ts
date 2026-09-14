@@ -1,4 +1,4 @@
-import { Goal, GoalInput, cloneGoal, validateGoal, validBusinessDate, GrowthActivity, builtInActivities } from './Goals.js';
+import { Goal, GoalInput, cloneGoal, clonePlan, normalizeTaskPlan, validateGoal, validBusinessDate, GrowthActivity, builtInActivities } from './Goals.js';
 import { builtInTemplates, validTaskRulePoints, validTaskRuleOptions, TEMPLATE_SEED_VERSION, TaskRules, TaskStage, TaskTemplate } from './TaskTemplates.js';
 
 export type ChildId = 'guoguo' | 'yangyang';
@@ -126,7 +126,7 @@ export interface ExecuteReceipt {
   revision: number;
 }
 
-export interface ScheduledTask { taskId: string; name: string; description: string; goalIds: string[]; completedCount: number; checkinIds: string[]; }
+export interface ScheduledTask { taskId: string; name: string; description: string; goalIds: string[]; completedCount: number; checkinIds: string[]; requiredCount?: number; }
 export interface ChildDay { currentChild: ChildProfile; businessDate: string; tasks: ScheduledTask[]; goals: Goal[]; revision: number; }
 export interface ActivitySnapshot { activities: GrowthActivity[]; }
 export interface GoalList { goals: Goal[]; revision: number; }
@@ -211,6 +211,18 @@ function cloneCheckin(checkin: CheckinRecord): CheckinRecord {
   return { ...checkin };
 }
 
+function cloneGoalTaskInput<T extends GoalInput['tasks'][number]>(task: T): T {
+  const plan = normalizeTaskPlan(task);
+  const copy = {
+    taskId: task.taskId,
+    ...(plan?.kind === 'weekly-frequency'
+      ? { plan: clonePlan(plan), weekdays: [] }
+      : { plan: plan === null ? undefined : clonePlan(plan), weekdays: [...(plan?.weekdays ?? [])] }),
+    ...(task.rules === undefined ? {} : { rules: { ...task.rules } }),
+  };
+  return copy as T;
+}
+
 function cloneSettlement(settlement: SettlementRecord): SettlementRecord {
   return {
     ...settlement,
@@ -219,6 +231,34 @@ function cloneSettlement(settlement: SettlementRecord): SettlementRecord {
       results: goal.results.map(result => ({ ...result })),
     })),
   };
+}
+
+function dateFromEpochDay(epochDay: number): string {
+  return new Date(epochDay * 86400000).toISOString().slice(0, 10);
+}
+
+function weekBounds(businessDate: string): { start: string; end: string } {
+  const date = new Date(`${businessDate}T00:00:00.000Z`);
+  const weekday = date.getUTCDay() || 7;
+  const epochDay = Math.floor(date.getTime() / 86400000);
+  return {
+    start: dateFromEpochDay(epochDay - weekday + 1),
+    end: dateFromEpochDay(epochDay + (7 - weekday)),
+  };
+}
+
+function activeCheckinsForTask(
+  state: FamilyState,
+  childId: ChildId,
+  taskId: string,
+  startDate: string,
+  endDate: string,
+): CheckinRecord[] {
+  return (state.checkins ?? []).filter(checkin => checkin.active
+    && checkin.childId === childId
+    && checkin.taskId === taskId
+    && checkin.businessDate >= startDate
+    && checkin.businessDate <= endDate);
 }
 
 function cloneState(state: FamilyState): FamilyState {
@@ -282,6 +322,7 @@ export class FamilyHabitModule {
       for (const goal of state.goals) {
         for (const task of goal.tasks) {
           task.streakCount = task.streakCount ?? 0;
+          task.plan = task.plan ?? { kind: 'date-weekdays', weekdays: [...task.weekdays] };
         }
       }
       state.checkins = state.checkins ?? [];
@@ -348,9 +389,7 @@ export class FamilyHabitModule {
     const submitted: DomainCommand = command.type === 'edit-task-pool-task'
       ? { ...command, defaultRules: { ...command.defaultRules } }
       : command.type === 'create-goal' || command.type === 'edit-goal'
-        ? { ...command, tasks: command.tasks.map(task => task.rules === undefined
-          ? { taskId: task.taskId, weekdays: [...task.weekdays] }
-          : { taskId: task.taskId, weekdays: [...task.weekdays], rules: { ...task.rules } }) }
+        ? { ...command, tasks: command.tasks.map(cloneGoalTaskInput) }
         : { ...command };
     const result = this.pendingCommand.then(() => this.executeCommand(token, submitted));
     this.pendingCommand = result.then(() => {}, () => {});
@@ -444,9 +483,7 @@ export class FamilyHabitModule {
       const nextState = cloneState(this.state);
       const checkin = (nextState.checkins ?? []).find(item => item.id === command.checkinId && item.childId === command.childId);
       if (checkin === undefined) return { ok: false, error: { code: 'CHECKIN_NOT_FOUND', message: '没有找到这条打卡记录。' } };
-      if ((this.state.settlements ?? []).some(settlement => settlement.active
-        && settlement.childId === command.childId
-        && settlement.businessDate === checkin.businessDate)) {
+      if (this.checkinBelongsToActiveSettlement(checkin)) {
         return { ok: false, error: { code: 'DATE_ALREADY_SETTLED', message: '该日期已清算，请联系家长先撤销清算。' } };
       }
       checkin.active = false;
@@ -521,9 +558,11 @@ export class FamilyHabitModule {
         tasks: command.tasks.map(input => {
           const source = (this.state.taskPool ?? []).find(task => task.id === input.taskId)!;
           const existing = previous?.tasks.find(task => task.taskId === input.taskId);
+          const plan = normalizeTaskPlan(input)!;
           return {
             taskId: input.taskId,
-            weekdays: [...input.weekdays],
+            weekdays: plan.kind === 'date-weekdays' ? [...plan.weekdays] : [],
+            plan: clonePlan(plan),
             rules: { ...(input.rules ?? existing?.rules ?? source.defaultRules) },
             streakCount: existing?.streakCount ?? 0,
           };
@@ -604,6 +643,18 @@ export class FamilyHabitModule {
     return { ok: true, value: receipt };
   }
 
+  private checkinBelongsToActiveSettlement(checkin: CheckinRecord): boolean {
+    for (const settlement of this.state.settlements ?? []) {
+      if (!settlement.active || settlement.childId !== checkin.childId) continue;
+      if (settlement.businessDate === checkin.businessDate) return true;
+      const settledTaskIds = settlement.goals.flatMap(goal => goal.results.map(result => result.taskId));
+      if (!settledTaskIds.includes(checkin.taskId)) continue;
+      const bounds = weekBounds(settlement.businessDate);
+      if (checkin.businessDate >= bounds.start && checkin.businessDate <= bounds.end) return true;
+    }
+    return false;
+  }
+
   private buildSettlementPreview(childId: ChildId, businessDate: string, state: FamilyState): SettlementPreview {
     const weekday = new Date(`${businessDate}T00:00:00.000Z`).getUTCDay() || 7;
     const goals: SettlementGoalPreview[] = [];
@@ -611,31 +662,25 @@ export class FamilyHabitModule {
       if (goal.childId !== childId || goal.status !== 'active' || goal.startDate > businessDate) continue;
       const results: SettlementTaskResult[] = [];
       for (const task of goal.tasks) {
-        if (!task.weekdays.includes(weekday)) continue;
-        const completedCount = (state.checkins ?? []).filter(checkin => checkin.active
-          && checkin.childId === childId
-          && checkin.taskId === task.taskId
-          && checkin.businessDate === businessDate).length;
-        if (completedCount > 0) {
-          const streakBonus = task.rules.streakEnabled
-            ? Math.min(
-              task.rules.streakCap ?? Number.MAX_SAFE_INTEGER,
-              task.streakCount ?? 0,
-            )
-            : 0;
-          results.push({
-            taskId: task.taskId,
-            status: 'completed',
-            completedCount,
-            pointsDelta: task.rules.completionPoints + streakBonus,
-          });
-        } else {
-          results.push({
-            taskId: task.taskId,
-            status: 'missed',
-            completedCount: 0,
-            pointsDelta: task.rules.missedPolicy === 'deduct' ? -task.rules.deductionPoints : 0,
-          });
+        const plan = task.plan ?? { kind: 'date-weekdays' as const, weekdays: task.weekdays };
+        if (plan.kind === 'date-weekdays') {
+          if (!plan.weekdays.includes(weekday)) continue;
+          const completedCount = (state.checkins ?? []).filter(checkin => checkin.active
+            && checkin.childId === childId
+            && checkin.taskId === task.taskId
+            && checkin.businessDate === businessDate).length;
+          results.push(this.buildTaskResult(task, completedCount > 0, completedCount));
+          continue;
+        }
+        const bounds = weekBounds(businessDate);
+        const checkins = activeCheckinsForTask(state, childId, task.taskId, bounds.start, businessDate);
+        if (checkins.length >= plan.requiredCount) {
+          const beforeToday = checkins.filter(checkin => checkin.businessDate < businessDate).length;
+          if (beforeToday < plan.requiredCount) {
+            results.push(this.buildTaskResult(task, true, checkins.length));
+          }
+        } else if (businessDate === bounds.end) {
+          results.push(this.buildTaskResult(task, false, checkins.length));
         }
       }
       if (results.length === 0) continue;
@@ -649,6 +694,29 @@ export class FamilyHabitModule {
       });
     }
     return { childId, businessDate, goals, revision: state.revision };
+  }
+
+  private buildTaskResult(task: Goal['tasks'][number], completed: boolean, completedCount: number): SettlementTaskResult {
+    if (completed) {
+      const streakBonus = task.rules.streakEnabled
+        ? Math.min(
+          task.rules.streakCap ?? Number.MAX_SAFE_INTEGER,
+          task.streakCount ?? 0,
+        )
+        : 0;
+      return {
+        taskId: task.taskId,
+        status: 'completed',
+        completedCount,
+        pointsDelta: task.rules.completionPoints + streakBonus,
+      };
+    }
+    return {
+      taskId: task.taskId,
+      status: 'missed',
+      completedCount,
+      pointsDelta: task.rules.missedPolicy === 'deduct' ? -task.rules.deductionPoints : 0,
+    };
   }
 
   async inspect(token: string, request: { type: 'growth-activities' }): Promise<Result<ActivitySnapshot>>;
@@ -704,15 +772,24 @@ export class FamilyHabitModule {
       for (const goal of goals) {
         if (goal.status !== 'active' || goal.startDate > request.businessDate) continue;
         for (const task of goal.tasks) {
-          if (!task.weekdays.includes(weekday)) continue;
+          const plan = task.plan ?? { kind: 'date-weekdays' as const, weekdays: task.weekdays };
+          if (plan.kind === 'date-weekdays' && !plan.weekdays.includes(weekday)) continue;
           const existing = tasks.find(item => item.taskId === task.taskId);
           if (existing !== undefined) { existing.goalIds.push(goal.id); continue; }
           const source = (this.state.taskPool ?? []).find(item => item.id === task.taskId)!;
-          const checkins = (this.state.checkins ?? []).filter(checkin => checkin.active
-            && checkin.childId === request.childId
-            && checkin.taskId === task.taskId
-            && checkin.businessDate === request.businessDate);
-          tasks.push({ taskId: task.taskId, name: source.name, description: source.description, goalIds: [goal.id], completedCount: checkins.length, checkinIds: checkins.map(checkin => checkin.id) });
+          const bounds = plan.kind === 'weekly-frequency'
+            ? weekBounds(request.businessDate)
+            : { start: request.businessDate, end: request.businessDate };
+          const checkins = activeCheckinsForTask(this.state, request.childId, task.taskId, bounds.start, request.businessDate);
+          tasks.push({
+            taskId: task.taskId,
+            name: source.name,
+            description: source.description,
+            goalIds: [goal.id],
+            completedCount: checkins.length,
+            checkinIds: checkins.map(checkin => checkin.id),
+            ...(plan.kind === 'weekly-frequency' ? { requiredCount: plan.requiredCount } : {}),
+          });
         }
       }
       return { ok: true, value: { currentChild: { ...this.state.children.find(child => child.id === request.childId)! }, businessDate: request.businessDate, tasks, goals: goals.map(cloneGoal), revision: this.state.revision } };
