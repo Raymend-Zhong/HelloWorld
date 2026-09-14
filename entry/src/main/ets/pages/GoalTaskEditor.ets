@@ -7,7 +7,9 @@ export class TaskDraft {
   name: string;
   disabled: boolean;
   selected: boolean;
+  planKind: 'date-weekdays' | 'weekly-frequency';
   weekdays: number[];
+  requiredCount: string;
   completion: string;
   deduction: string;
   deduct: boolean;
@@ -20,7 +22,9 @@ export class TaskDraft {
     this.name = task.name;
     this.disabled = task.disabled;
     this.selected = existing !== undefined;
+    this.planKind = existing?.plan?.kind ?? 'date-weekdays';
     this.weekdays = existing === undefined ? [1, 2, 3, 4, 5, 6, 7] : [...existing.weekdays];
+    this.requiredCount = existing?.plan?.kind === 'weekly-frequency' ? `${existing.plan.requiredCount}` : '3';
     this.completion = `${rules.completionPoints}`;
     this.deduction = `${rules.deductionPoints}`;
     this.deduct = rules.missedPolicy === 'deduct';
@@ -49,14 +53,30 @@ export struct GoalTaskEditor {
         .backgroundColor(this.task.selected ? '#467B64' : '#E8E1D7').fontColor(this.task.selected ? '#FFFFFF' : '#3E352F')
         .onClick(() => { this.task.selected = !this.task.selected; this.onChange(); })
       if (this.task.selected) {
-        Text('每周完成日期').fontSize(17)
-        Flex({ wrap: FlexWrap.Wrap }) {
-          ForEach(this.weekdays, (day: number) => {
-            Button(`周${this.weekdayName(day)}`).id(`goal-day-${this.task.taskId}-${day}`).margin(4)
-              .backgroundColor(this.task.weekdays.includes(day) ? '#467B64' : '#E8E1D7')
-              .fontColor(this.task.weekdays.includes(day) ? '#FFFFFF' : '#3E352F')
-              .onClick(() => this.selectDay(day))
-          }, (day: number) => `${day}`)
+        Text('任务计划').fontSize(17)
+        Row({ space: 12 }) {
+          Button('按星期日期').id(`goal-plan-date-${this.task.taskId}`)
+            .backgroundColor(this.task.planKind === 'date-weekdays' ? '#467B64' : '#E8E1D7')
+            .fontColor(this.task.planKind === 'date-weekdays' ? '#FFFFFF' : '#3E352F')
+            .onClick(() => { this.task.planKind = 'date-weekdays'; this.onChange(); })
+          Button('每周次数').id(`goal-plan-weekly-${this.task.taskId}`)
+            .backgroundColor(this.task.planKind === 'weekly-frequency' ? '#467B64' : '#E8E1D7')
+            .fontColor(this.task.planKind === 'weekly-frequency' ? '#FFFFFF' : '#3E352F')
+            .onClick(() => { this.task.planKind = 'weekly-frequency'; this.onChange(); })
+        }
+        if (this.task.planKind === 'date-weekdays') {
+          Text('每周完成日期').fontSize(17)
+          Flex({ wrap: FlexWrap.Wrap }) {
+            ForEach(this.weekdays, (day: number) => {
+              Button(`周${this.weekdayName(day)}`).id(`goal-day-${this.task.taskId}-${day}`).margin(4)
+                .backgroundColor(this.task.weekdays.includes(day) ? '#467B64' : '#E8E1D7')
+                .fontColor(this.task.weekdays.includes(day) ? '#FFFFFF' : '#3E352F')
+                .onClick(() => this.selectDay(day))
+            }, (day: number) => `${day}`)
+          }
+        } else {
+          TextInput({ text: this.task.requiredCount, placeholder: '每周所需次数' }).id(`goal-weekly-required-${this.task.taskId}`).type(InputType.Number)
+            .onChange((text: string) => { this.task.requiredCount = text; this.onChange(); })
         }
         Text('完成积分 / 未完成扣分值').fontSize(17)
         Row({ space: 12 }) {

@@ -105,7 +105,9 @@ export struct GoalPanel {
       const rules: TaskRules = { completionPoints: this.number(task.completion), deductionPoints: this.number(task.deduction),
         missedPolicy: task.deduct ? 'deduct' : 'no-points', streakEnabled: task.streak,
         streakCap: task.cap.trim() === '' ? null : Number(task.cap) };
-      const input: GoalTaskInput = { taskId: task.taskId, weekdays: [...task.weekdays], rules };
+      const input: GoalTaskInput = task.planKind === 'weekly-frequency'
+        ? { taskId: task.taskId, plan: { kind: 'weekly-frequency', requiredCount: this.number(task.requiredCount) }, rules }
+        : { taskId: task.taskId, weekdays: [...task.weekdays], rules };
       return input;
     });
     const creating: CreateGoalCommand = { type: 'create-goal', childId: this.childId, businessDate: localBusinessDate(),
@@ -242,7 +244,10 @@ export struct GoalPanel {
         ForEach(goal.tasks, (task: GoalTask) => {
           Column({ space: 8 }) {
             Text(this.taskName(task.taskId)).fontSize(21)
-            Text(`每周${task.weekdays.map(day => this.weekdayName(day)).join('、')}`).fontSize(17)
+            Text(task.plan.kind === 'weekly-frequency'
+              ? `每周完成 ${task.plan.requiredCount} 次`
+              : `每周${task.weekdays.map(day => this.weekdayName(day)).join('、')}`)
+              .fontSize(17)
             Text(`完成 ${task.rules.completionPoints} 分 · 未完成${task.rules.missedPolicy === 'deduct' ? `扣 ${task.rules.deductionPoints} 分` : '不得分'}`).fontSize(17)
             Text(task.rules.streakEnabled ? `连续奖励开启 · 已连续 ${task.streakCount} 次 · 上限${task.rules.streakCap === null ? '不限' : task.rules.streakCap}` : '连续奖励关闭')
               .id(`goal-streak-${goal.id}-${task.taskId}`)

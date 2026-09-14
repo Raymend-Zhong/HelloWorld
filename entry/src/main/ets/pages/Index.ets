@@ -267,7 +267,12 @@ struct Index {
             Row({ space: 12 }) {
               Column({ space: 4 }) {
                 Text(task.name).fontSize(22)
-                Text(`今日已打卡 ${task.completedCount} 次`).id(`checkin-count-${task.taskId}`).fontSize(16).fontColor('#65584F')
+                Text(task.requiredCount === undefined
+                  ? `今日已打卡 ${task.completedCount} 次`
+                  : `本周进度 ${task.completedCount} / ${task.requiredCount} 次`)
+                  .id(`checkin-count-${task.taskId}`)
+                  .fontSize(16)
+                  .fontColor('#65584F')
               }.layoutWeight(1)
               Button('打卡').id(`checkin-submit-${task.taskId}`).onClick(() => this.submitCheckin(task.taskId))
               Button('撤销').id(`checkin-revoke-${task.taskId}`).enabled(task.completedCount > 0).onClick(() => this.revokeCheckin(task))

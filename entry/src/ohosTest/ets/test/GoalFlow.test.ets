@@ -35,10 +35,15 @@ export default function goalFlowTest(): void {
       await (await driver.findComponent(ON.text(`选择 · ${taskName}`))).click();
       await driver.assertComponentExist(ON.text(`已选择 · ${taskName}`));
       await driver.assertComponentExist(ON.text('每周完成日期'));
+      await (await driver.findComponent(ON.id('goal-plan-weekly-task-3'))).click();
+      const weeklyRequired = await driver.findComponent(ON.id('goal-weekly-required-task-3'));
+      await weeklyRequired.inputText('3');
+      await finishInput(driver);
       await (await driver.findComponent(ON.id('goal-save'))).click();
       await driver.assertComponentExist(ON.id('goal-detail'));
       await driver.assertComponentExist(ON.text(goalName));
       await driver.assertComponentExist(ON.text('进行中 · 0 / 100 分'));
+      await driver.assertComponentExist(ON.text('每周完成 3 次'));
       await (await driver.findComponent(ON.id('goal-edit'))).click();
       await (await driver.findComponent(ON.id('goal-name'))).inputText(`${goalName}已编辑`);
       await finishInput(driver);

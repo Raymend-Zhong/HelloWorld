@@ -68,3 +68,19 @@ test('[TASK-7-UI01][AC-38][AC-40] ArkUI 提供目标结束状态和终止操作�
     assert.match(source, new RegExp(selector));
   }
 });
+
+test('[TASK-8-UI01][AC-17][AC-18] ArkUI 提供频率计划和周期进度稳定选择器', async () => {
+  const index = await readFile(INDEX_PATH, 'utf8');
+  const goalPanel = await readFile(new URL('../entry/src/main/ets/pages/GoalPanel.ets', import.meta.url), 'utf8');
+  const taskEditor = await readFile(new URL('../entry/src/main/ets/pages/GoalTaskEditor.ets', import.meta.url), 'utf8');
+
+  assert.match(index, /本周进度/);
+  assert.match(goalPanel, /每周完成 \$\{task\.plan\.requiredCount\} 次/);
+  for (const selector of [
+    'goal-plan-date-',
+    'goal-plan-weekly-',
+    'goal-weekly-required-',
+  ]) {
+    assert.match(taskEditor, new RegExp(selector));
+  }
+});
