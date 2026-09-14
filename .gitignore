@@ -1,0 +1,10 @@
+.DS_Store
+node_modules/
+coverage/
+.hvigor/
+.idea/
+oh_modules/
+build/
+entry/build/
+local.properties
+signature/

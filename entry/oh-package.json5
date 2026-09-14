@@ -1,0 +1,12 @@
+{
+  "name": "entry",
+  "version": "0.1.0",
+  "description": "成长打卡主模块",
+  "main": "",
+  "author": "",
+  "license": "",
+  "dependencies": {},
+  "devDependencies": {
+    "@ohos/hypium": "1.0.21"
+  }
+}
