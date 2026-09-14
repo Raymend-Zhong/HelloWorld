@@ -1,5 +1,5 @@
 import { Goal, GoalInput, cloneGoal, validateGoal, validBusinessDate, GrowthActivity, builtInActivities } from './Goals.js';
-import { builtInTemplates, TEMPLATE_SEED_VERSION, TaskRules, TaskStage, TaskTemplate } from './TaskTemplates.js';
+import { builtInTemplates, validTaskRulePoints, validTaskRuleOptions, TEMPLATE_SEED_VERSION, TaskRules, TaskStage, TaskTemplate } from './TaskTemplates.js';
 
 export type ChildId = 'guoguo' | 'yangyang';
 
@@ -383,12 +383,10 @@ export class FamilyHabitModule {
     if (command.type === 'edit-task-pool-task') {
       if (command.name.trim().length === 0) return { ok: false, error: { code: 'VALIDATION_FAILED', message: '请输入任务名称。' } };
       const rules = command.defaultRules;
-      if (!Number.isSafeInteger(rules.completionPoints) || rules.completionPoints <= 0
-        || !Number.isSafeInteger(rules.deductionPoints) || rules.deductionPoints < 0
-        || (rules.streakCap !== null && (!Number.isSafeInteger(rules.streakCap) || rules.streakCap < 0))) {
+      if (!validTaskRulePoints(rules)) {
         return { ok: false, error: { code: 'VALIDATION_FAILED', message: '完成积分须为正整数，扣分值和连续奖励上限须为非负整数。' } };
       }
-      if ((rules.missedPolicy !== 'no-points' && rules.missedPolicy !== 'deduct') || typeof rules.streakEnabled !== 'boolean') {
+      if (!validTaskRuleOptions(rules)) {
         return { ok: false, error: { code: 'VALIDATION_FAILED', message: '请选择有效的未完成处理和连续奖励设置。' } };
       }
       const nextState = cloneState(this.state);

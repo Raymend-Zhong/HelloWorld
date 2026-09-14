@@ -8,6 +8,17 @@ export interface TaskRules {
   streakCap: number | null;
 }
 
+export function validTaskRulePoints(rules: TaskRules): boolean {
+  return Number.isSafeInteger(rules.completionPoints) && rules.completionPoints > 0
+    && Number.isSafeInteger(rules.deductionPoints) && rules.deductionPoints >= 0
+    && (rules.streakCap === null || (Number.isSafeInteger(rules.streakCap) && rules.streakCap >= 0));
+}
+
+export function validTaskRuleOptions(rules: TaskRules): boolean {
+  return (rules.missedPolicy === 'no-points' || rules.missedPolicy === 'deduct')
+    && typeof rules.streakEnabled === 'boolean';
+}
+
 export interface TaskTemplate {
   id: string;
   stage: TaskStage;

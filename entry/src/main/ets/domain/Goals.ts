@@ -1,4 +1,4 @@
-import { TaskRules } from './TaskTemplates.js';
+import { TaskRules, validTaskRulePoints, validTaskRuleOptions } from './TaskTemplates.js';
 
 export interface GoalTaskInput {
   taskId: string;
@@ -75,10 +75,7 @@ export function validateGoal(input: GoalInput, businessDate: string): GoalValida
       return { code: 'VALIDATION_FAILED', field: `tasks.${index}.weekdays`, message: '请为任务选择不重复的星期一至星期日。' };
     }
     const rules = task.rules;
-    if (rules !== undefined && (!Number.isSafeInteger(rules.completionPoints) || rules.completionPoints <= 0
-      || !Number.isSafeInteger(rules.deductionPoints) || rules.deductionPoints < 0
-      || (rules.streakCap !== null && (!Number.isSafeInteger(rules.streakCap) || rules.streakCap < 0))
-      || (rules.missedPolicy !== 'deduct' && rules.missedPolicy !== 'no-points') || typeof rules.streakEnabled !== 'boolean')) {
+    if (rules !== undefined && (!validTaskRulePoints(rules) || !validTaskRuleOptions(rules))) {
       return { code: 'VALIDATION_FAILED', field: `tasks.${index}.rules`, message: '完成积分须为正整数，扣分值和奖励上限须为非负整数，请检查未完成处理与连续奖励设置。' };
     }
   }
