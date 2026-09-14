@@ -197,7 +197,7 @@ test('[TASK-3][AC-05] 孩子执行家长命令会被拒绝且领域状态不变'
     { type: 'manage-task-pool' },
     { type: 'manage-goal' },
     { type: 'exempt-task' },
-    { type: 'confirm-settlement' },
+    { type: 'confirm-settlement', childId: 'guoguo', businessDate: '2026-09-14', expectedRevision: before.value.revision },
   ] as const;
   for (const command of privilegedCommands) {
     const result = await module.execute(child.value.token, command);

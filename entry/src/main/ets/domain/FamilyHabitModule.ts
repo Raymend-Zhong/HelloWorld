@@ -25,7 +25,27 @@ export interface TaskPoolTask {
   disabled: boolean;
 }
 
+export interface CheckinRecord {
+  id: string;
+  childId: ChildId;
+  taskId: string;
+  businessDate: string;
+  active: boolean;
+  submittedBy: 'child' | 'parent';
+}
+
+export interface SettlementRecord {
+  id: string;
+  childId: ChildId;
+  businessDate: string;
+  revision: number;
+  goals: SettlementGoalPreview[];
+  active: boolean;
+}
+
 export interface FamilyState {
+  settlements?: SettlementRecord[];
+  checkins?: CheckinRecord[];
   goals?: Goal[];
   templateSeedVersion?: number;
   taskTemplates?: TaskTemplate[];
@@ -86,6 +106,8 @@ export interface EditGoalCommand extends GoalInput { type: 'edit-goal'; childId:
 export type DomainCommand =
   | EditGoalCommand
   | CreateGoalCommand
+  | { type: 'revoke-checkin'; childId: ChildId; checkinId: string }
+  | { type: 'submit-checkin'; childId: ChildId; taskId: string; businessDate: string }
   | { type: 'set-parent-password'; password: string }
   | { type: 'disable-task-pool-task'; childId: ChildId; taskId: string }
   | { type: 'edit-task-pool-task'; childId: ChildId; taskId: string; name: string; description: string; defaultRules: TaskRules }
@@ -93,21 +115,43 @@ export type DomainCommand =
   | { type: 'manage-task-pool' }
   | { type: 'manage-goal' }
   | { type: 'exempt-task' }
-  | { type: 'confirm-settlement' };
+  | { type: 'confirm-settlement'; childId: ChildId; businessDate: string; expectedRevision: number };
 
 export interface ExecuteReceipt {
+  checkinId?: string;
+  settlementId?: string;
   goalId?: string;
   taskId?: string;
   revision: number;
 }
 
-export interface ScheduledTask { taskId: string; name: string; description: string; goalIds: string[]; }
+export interface ScheduledTask { taskId: string; name: string; description: string; goalIds: string[]; completedCount: number; checkinIds: string[]; }
 export interface ChildDay { currentChild: ChildProfile; businessDate: string; tasks: ScheduledTask[]; goals: Goal[]; revision: number; }
 export interface ActivitySnapshot { activities: GrowthActivity[]; }
 export interface GoalList { goals: Goal[]; revision: number; }
 export interface GoalDetail { goal: Goal; revision: number; }
+export interface SettlementTaskResult {
+  taskId: string;
+  status: 'completed' | 'missed';
+  completedCount: number;
+  pointsDelta: number;
+}
+export interface SettlementGoalPreview {
+  goalId: string;
+  results: SettlementTaskResult[];
+  netDelta: number;
+  pointsBefore: number;
+  pointsAfter: number;
+}
+export interface SettlementPreview {
+  childId: ChildId;
+  businessDate: string;
+  goals: SettlementGoalPreview[];
+  revision: number;
+}
 
 export type InspectRequest =
+  | { type: 'settlement-preview'; childId: ChildId; businessDate: string }
   | { type: 'growth-activities' }
   | { type: 'child-day'; childId: ChildId; businessDate: string }
   | { type: 'goal-list'; childId: ChildId }
@@ -141,7 +185,7 @@ export interface TaskPoolSnapshot {
   revision: number;
 }
 
-export type InspectSnapshot = ActivitySnapshot | ChildDay | GoalList | GoalDetail | FamilyOverview | ChildHome | TemplateSnapshot | TaskPoolSnapshot;
+export type InspectSnapshot = ActivitySnapshot | ChildDay | GoalList | GoalDetail | SettlementPreview | FamilyOverview | ChildHome | TemplateSnapshot | TaskPoolSnapshot;
 
 const INITIAL_CHILDREN: ChildProfile[] = [
   {
@@ -162,8 +206,24 @@ function cloneTask(task: TaskPoolTask): TaskPoolTask {
   return { ...task, defaultRules: { ...task.defaultRules } };
 }
 
+function cloneCheckin(checkin: CheckinRecord): CheckinRecord {
+  return { ...checkin };
+}
+
+function cloneSettlement(settlement: SettlementRecord): SettlementRecord {
+  return {
+    ...settlement,
+    goals: settlement.goals.map(goal => ({
+      ...goal,
+      results: goal.results.map(result => ({ ...result })),
+    })),
+  };
+}
+
 function cloneState(state: FamilyState): FamilyState {
   return {
+    settlements: (state.settlements ?? []).map(cloneSettlement),
+    checkins: (state.checkins ?? []).map(cloneCheckin),
     goals: (state.goals ?? []).map(cloneGoal),
     templateSeedVersion: state.templateSeedVersion ?? 0,
     taskTemplates: (state.taskTemplates ?? []).map(item => ({ ...item, defaultRules: { ...item.defaultRules } })),
@@ -205,19 +265,21 @@ export class FamilyHabitModule {
     passwordHasher: PasswordHasher,
   ): Promise<FamilyHabitModule> {
     const stored = await persistence.load();
-    if (stored !== null && (stored.schemaVersion < 1 || stored.schemaVersion > 3
+    if (stored !== null && (stored.schemaVersion < 1 || stored.schemaVersion > 4
       || (stored.templateSeedVersion ?? 0) > TEMPLATE_SEED_VERSION)) {
       throw new Error('家庭数据版本不兼容，请使用对应版本的应用。');
     }
     const state: FamilyState = stored === null ? {
-      schemaVersion: 3,
+      schemaVersion: 4,
       revision: 1,
       children: INITIAL_CHILDREN.map((child) => ({ ...child })),
       parentCredential: null,
     } : cloneState(stored);
-    if (stored === null || state.schemaVersion < 3 || (state.templateSeedVersion ?? 0) < TEMPLATE_SEED_VERSION) {
-      state.schemaVersion = 3;
+    if (stored === null || state.schemaVersion < 4 || (state.templateSeedVersion ?? 0) < TEMPLATE_SEED_VERSION) {
+      state.schemaVersion = 4;
       state.goals = state.goals ?? [];
+      state.checkins = state.checkins ?? [];
+      state.settlements = state.settlements ?? [];
       state.taskPool = state.taskPool ?? [];
       if ((state.templateSeedVersion ?? 0) < 1) {
         state.taskTemplates = builtInTemplates();
@@ -302,6 +364,8 @@ export class FamilyHabitModule {
     }
     if (
       session.role !== 'parent'
+      && command.type !== 'submit-checkin'
+      && command.type !== 'revoke-checkin'
       && command.type !== 'set-parent-password'
     ) {
       return {
@@ -342,6 +406,83 @@ export class FamilyHabitModule {
         parentCredential: { salt, digest },
       };
       return this.saveState(nextState);
+    }
+    if (command.type === 'submit-checkin') {
+      if (session.role === 'child' && session.childId !== command.childId) {
+        return { ok: false, error: { code: 'PERMISSION_DENIED', message: '请从对应孩子入口打卡。' } };
+      }
+      if (!validBusinessDate(command.businessDate)) {
+        return { ok: false, error: { code: 'VALIDATION_FAILED', field: 'businessDate', message: '请选择有效的业务日期。' } };
+      }
+      const task = (this.state.taskPool ?? []).find(item => item.id === command.taskId && item.childId === command.childId);
+      if (task === undefined) return { ok: false, error: { code: 'TASK_NOT_FOUND', message: '没有找到这个任务池任务。' } };
+      const nextState = cloneState(this.state);
+      nextState.revision += 1;
+      const checkin: CheckinRecord = {
+        id: `checkin-${nextState.revision}`,
+        childId: command.childId,
+        taskId: command.taskId,
+        businessDate: command.businessDate,
+        active: true,
+        submittedBy: session.role === 'parent' ? 'parent' : 'child',
+      };
+      nextState.checkins = [...(nextState.checkins ?? []), checkin];
+      const saved = await this.saveState(nextState);
+      if (!saved.ok) return saved;
+      return { ok: true, value: { ...saved.value, checkinId: checkin.id } };
+    }
+    if (command.type === 'revoke-checkin') {
+      if (session.role === 'child' && session.childId !== command.childId) {
+        return { ok: false, error: { code: 'PERMISSION_DENIED', message: '请从对应孩子入口撤销打卡。' } };
+      }
+      const nextState = cloneState(this.state);
+      const checkin = (nextState.checkins ?? []).find(item => item.id === command.checkinId && item.childId === command.childId);
+      if (checkin === undefined) return { ok: false, error: { code: 'CHECKIN_NOT_FOUND', message: '没有找到这条打卡记录。' } };
+      if ((this.state.settlements ?? []).some(settlement => settlement.active
+        && settlement.childId === command.childId
+        && settlement.businessDate === checkin.businessDate)) {
+        return { ok: false, error: { code: 'DATE_ALREADY_SETTLED', message: '该日期已清算，请联系家长先撤销清算。' } };
+      }
+      checkin.active = false;
+      nextState.revision += 1;
+      return this.saveState(nextState);
+    }
+    if (command.type === 'confirm-settlement') {
+      if (!validBusinessDate(command.businessDate)) {
+        return { ok: false, error: { code: 'VALIDATION_FAILED', field: 'businessDate', message: '请选择有效的业务日期。' } };
+      }
+      if ((this.state.settlements ?? []).some(settlement => settlement.active
+        && settlement.childId === command.childId
+        && settlement.businessDate === command.businessDate)) {
+        return { ok: false, error: { code: 'DATE_ALREADY_SETTLED', message: '该日期已经清算。' } };
+      }
+      if (command.expectedRevision !== this.state.revision) {
+        return { ok: false, error: { code: 'SETTLEMENT_PREVIEW_EXPIRED', message: '清算审阅已过期，请重新审阅。' } };
+      }
+      const preview = this.buildSettlementPreview(command.childId, command.businessDate, this.state);
+      const nextState = cloneState(this.state);
+      nextState.revision += 1;
+      for (const goalPreview of preview.goals) {
+        const goal = (nextState.goals ?? []).find(item => item.id === goalPreview.goalId && item.childId === command.childId);
+        if (goal === undefined) continue;
+        goal.points = goalPreview.pointsAfter;
+        goal.highestPoints = Math.max(goal.highestPoints, goal.points);
+      }
+      const settlement: SettlementRecord = {
+        id: `settlement-${nextState.revision}`,
+        childId: command.childId,
+        businessDate: command.businessDate,
+        revision: nextState.revision,
+        goals: preview.goals.map(goal => ({
+          ...goal,
+          results: goal.results.map(result => ({ ...result })),
+        })),
+        active: true,
+      };
+      nextState.settlements = [...(nextState.settlements ?? []), settlement];
+      const saved = await this.saveState(nextState);
+      if (!saved.ok) return saved;
+      return { ok: true, value: { ...saved.value, settlementId: settlement.id } };
     }
     if (command.type === 'create-goal' || command.type === 'edit-goal') {
       const previous = command.type === 'edit-goal' ? (this.state.goals ?? []).find(goal => goal.id === command.goalId && goal.childId === command.childId) : undefined;
@@ -432,7 +573,49 @@ export class FamilyHabitModule {
     return { ok: true, value: receipt };
   }
 
+  private buildSettlementPreview(childId: ChildId, businessDate: string, state: FamilyState): SettlementPreview {
+    const weekday = new Date(`${businessDate}T00:00:00.000Z`).getUTCDay() || 7;
+    const goals: SettlementGoalPreview[] = [];
+    for (const goal of state.goals ?? []) {
+      if (goal.childId !== childId || goal.status !== 'active' || goal.startDate > businessDate) continue;
+      const results: SettlementTaskResult[] = [];
+      for (const task of goal.tasks) {
+        if (!task.weekdays.includes(weekday)) continue;
+        const completedCount = (state.checkins ?? []).filter(checkin => checkin.active
+          && checkin.childId === childId
+          && checkin.taskId === task.taskId
+          && checkin.businessDate === businessDate).length;
+        if (completedCount > 0) {
+          results.push({
+            taskId: task.taskId,
+            status: 'completed',
+            completedCount,
+            pointsDelta: task.rules.completionPoints,
+          });
+        } else {
+          results.push({
+            taskId: task.taskId,
+            status: 'missed',
+            completedCount: 0,
+            pointsDelta: task.rules.missedPolicy === 'deduct' ? -task.rules.deductionPoints : 0,
+          });
+        }
+      }
+      if (results.length === 0) continue;
+      const netDelta = results.reduce((sum, result) => sum + result.pointsDelta, 0);
+      goals.push({
+        goalId: goal.id,
+        results,
+        netDelta,
+        pointsBefore: goal.points,
+        pointsAfter: Math.max(0, goal.points + netDelta),
+      });
+    }
+    return { childId, businessDate, goals, revision: state.revision };
+  }
+
   async inspect(token: string, request: { type: 'growth-activities' }): Promise<Result<ActivitySnapshot>>;
+  async inspect(token: string, request: { type: 'settlement-preview'; childId: ChildId; businessDate: string }): Promise<Result<SettlementPreview>>;
   async inspect(token: string, request: { type: 'child-day'; childId: ChildId; businessDate: string }): Promise<Result<ChildDay>>;
   async inspect(token: string, request: { type: 'goal-list'; childId: ChildId }): Promise<Result<GoalList>>;
   async inspect(token: string, request: { type: 'goal-detail'; childId: ChildId; goalId: string }): Promise<Result<GoalDetail>>;
@@ -461,13 +644,20 @@ export class FamilyHabitModule {
       };
     }
     if (request.type === 'growth-activities') return { ok: true, value: { activities: builtInActivities() } };
-    if (request.type === 'goal-detail' || request.type === 'goal-list' || request.type === 'child-day') {
+    if (request.type === 'goal-detail' || request.type === 'goal-list' || request.type === 'child-day' || request.type === 'settlement-preview') {
       if (session.role !== 'parent' && (session.role !== 'child' || session.childId !== request.childId)) {
         return { ok: false, error: { code: 'PERMISSION_DENIED', message: '请从对应孩子入口查看目标。' } };
       }
       if (!this.state.children.some(child => child.id === request.childId)) {
         return { ok: false, error: { code: 'CHILD_NOT_FOUND', message: '没有找到这个孩子账套。' } };
       }
+    }
+    if (request.type === 'settlement-preview') {
+      if (session.role !== 'parent') {
+        return { ok: false, error: { code: 'PERMISSION_DENIED', message: '这个操作需要家长来完成。' } };
+      }
+      if (!validBusinessDate(request.businessDate)) return { ok: false, error: { code: 'VALIDATION_FAILED', field: 'businessDate', message: '请选择有效的业务日期。' } };
+      return { ok: true, value: this.buildSettlementPreview(request.childId, request.businessDate, this.state) };
     }
     if (request.type === 'child-day') {
       if (!validBusinessDate(request.businessDate)) return { ok: false, error: { code: 'VALIDATION_FAILED', field: 'businessDate', message: '请选择有效的业务日期。' } };
@@ -481,7 +671,11 @@ export class FamilyHabitModule {
           const existing = tasks.find(item => item.taskId === task.taskId);
           if (existing !== undefined) { existing.goalIds.push(goal.id); continue; }
           const source = (this.state.taskPool ?? []).find(item => item.id === task.taskId)!;
-          tasks.push({ taskId: task.taskId, name: source.name, description: source.description, goalIds: [goal.id] });
+          const checkins = (this.state.checkins ?? []).filter(checkin => checkin.active
+            && checkin.childId === request.childId
+            && checkin.taskId === task.taskId
+            && checkin.businessDate === request.businessDate);
+          tasks.push({ taskId: task.taskId, name: source.name, description: source.description, goalIds: [goal.id], completedCount: checkins.length, checkinIds: checkins.map(checkin => checkin.id) });
         }
       }
       return { ok: true, value: { currentChild: { ...this.state.children.find(child => child.id === request.childId)! }, businessDate: request.businessDate, tasks, goals: goals.map(cloneGoal), revision: this.state.revision } };

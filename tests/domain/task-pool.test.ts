@@ -164,7 +164,7 @@ test('[TASK-4-S08][AC-07] 模式1升级后保留家长和孩子并可以复制�
   assert.equal(overview.revision, 7);
   assert.deepEqual(overview.children.map(child => child.id), ['guoguo', 'yangyang']);
   // 在已确认的持久化合约边界验证模式版本。
-  assert.equal((await disk.load())?.schemaVersion, 3);
+  assert.equal((await disk.load())?.schemaVersion, 4);
   value(await module.execute(parent.token, { type: 'copy-task-template', childId: 'yangyang', templateId: 'kindergarten-english' }));
   const expected = await module.inspect(parent.token, { type: 'task-pool', childId: 'yangyang' });
   const restarted = await FamilyHabitModule.create(disk, hasher);
