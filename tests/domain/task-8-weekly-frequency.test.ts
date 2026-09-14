@@ -77,7 +77,7 @@ test('[TASK-8-S01][AC-17] 每周三次频率任务允许同一天三次打卡并
   }));
   assert.deepEqual(preview.goals, [{
     goalId,
-    results: [{ taskId, status: 'completed', completedCount: 3, pointsDelta: 9 }],
+    results: [{ taskId, planKind: 'weekly-frequency', status: 'completed', completedCount: 3, pointsDelta: 9 }],
     netDelta: 9,
     pointsBefore: 0,
     pointsAfter: 9,
@@ -124,7 +124,7 @@ test('[TASK-8-S02][AC-18] 频率任务达标前不计分且达标后本周期超
   }));
   assert.deepEqual(achieved.goals, [{
     goalId,
-    results: [{ taskId, status: 'completed', completedCount: 2, pointsDelta: 6 }],
+    results: [{ taskId, planKind: 'weekly-frequency', status: 'completed', completedCount: 2, pointsDelta: 6 }],
     netDelta: 6,
     pointsBefore: 0,
     pointsAfter: 6,
@@ -194,7 +194,7 @@ test('[TASK-8-S03][AC-19] 频率任务到周日仍未达标时产生一次未完
   }));
   assert.deepEqual(preview.goals, [{
     goalId,
-    results: [{ taskId, status: 'missed', completedCount: 1, pointsDelta: -2 }],
+    results: [{ taskId, planKind: 'weekly-frequency', status: 'missed', completedCount: 1, pointsDelta: -2 }],
     netDelta: -2,
     pointsBefore: 5,
     pointsAfter: 3,

@@ -159,7 +159,7 @@ test('[TASK-7-S02][AC-22][AC-23][AC-24] 连续奖励递增、受上限限制并�
   }));
   assert.deepEqual(afterMiss.goals, [{
     goalId,
-    results: [{ taskId, status: 'completed', completedCount: 1, pointsDelta: 10 }],
+    results: [{ taskId, planKind: 'date-weekdays', status: 'completed', completedCount: 1, pointsDelta: 10 }],
     netDelta: 10,
     pointsBefore: 29,
     pointsAfter: 39,
