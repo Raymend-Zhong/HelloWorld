@@ -104,7 +104,9 @@ struct Index {
       checkinId,
     });
     if (result.ok === false) {
-      this.message = result.error.message;
+      this.message = result.error.code === 'SETTLEMENT_PREVIEW_EXPIRED'
+        ? '清算审阅已过期，请重新审阅。'
+        : result.error.message;
       return;
     }
     this.message = '已撤销打卡。';
@@ -146,6 +148,36 @@ struct Index {
     }
     this.message = '清算已确认。';
     await this.reviewSettlement();
+  }
+
+  private async exemptSettlementResult(result: SettlementTaskResult, weekly: boolean): Promise<void> {
+    if (this.settlementPreview === null) return;
+    const command = weekly
+      ? {
+        type: 'exempt-weekly-task' as const,
+        childId: this.settlementPreview.childId,
+        taskId: result.taskId,
+        weekOf: this.settlementPreview.businessDate,
+      }
+      : {
+        type: 'exempt-date-task' as const,
+        childId: this.settlementPreview.childId,
+        taskId: result.taskId,
+        businessDate: this.settlementPreview.businessDate,
+      };
+    const saved = await this.module.execute(this.parentToken, command);
+    if (saved.ok === false) {
+      this.message = saved.error.message;
+      return;
+    }
+    this.message = '已豁免，请重新审阅后确认清算。';
+    await this.reviewSettlement();
+  }
+
+  private settlementResultLabel(result: SettlementTaskResult): string {
+    if (result.status === 'completed') return '已完成';
+    if (result.status === 'exempted') return '已豁免';
+    return '未完成';
   }
 
   private async openParentEntry(): Promise<void> {
@@ -378,9 +410,20 @@ struct Index {
               Column({ space: 8 }) {
                 Text(`目标 ${goal.goalId}`).fontSize(20).fontWeight(FontWeight.Bold)
                 ForEach(goal.results, (result: SettlementTaskResult) => {
-                  Text(`${result.status === 'completed' ? '已完成' : '未完成'} · ${result.taskId} · ${result.pointsDelta} 分`)
-                    .id(`settlement-result-${goal.goalId}-${result.taskId}`)
-                    .fontSize(17)
+                  Row({ space: 10 }) {
+                    Text(`${this.settlementResultLabel(result)} · ${result.taskId} · ${result.pointsDelta} 分`)
+                      .id(`settlement-result-${goal.goalId}-${result.taskId}`)
+                      .fontSize(17)
+                      .layoutWeight(1)
+                    if (result.status === 'missed') {
+                      Button('日期豁免')
+                        .id(`settlement-exempt-date-${goal.goalId}-${result.taskId}`)
+                        .onClick(() => this.exemptSettlementResult(result, false))
+                      Button('周期豁免')
+                        .id(`settlement-exempt-weekly-${goal.goalId}-${result.taskId}`)
+                        .onClick(() => this.exemptSettlementResult(result, true))
+                    }
+                  }
                 }, (result: SettlementTaskResult) => result.taskId)
                 Text(`净变化 ${goal.netDelta} 分，清算后 ${goal.pointsAfter} 分`).id(`settlement-net-${goal.goalId}`).fontSize(18)
               }.width('100%').padding(14).backgroundColor(Color.White).borderRadius(12)

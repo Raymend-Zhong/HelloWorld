@@ -84,3 +84,18 @@ test('[TASK-8-UI01][AC-17][AC-18] ArkUI 提供频率计划和周期进度稳定�
     assert.match(taskEditor, new RegExp(selector));
   }
 });
+
+test('[TASK-9-UI01][AC-20][AC-31] ArkUI 提供豁免与清算审阅过期处理稳定选择器', async () => {
+  const source = await readFile(INDEX_PATH, 'utf8');
+  const selectors = [
+    'settlement-exempt-date-',
+    'settlement-exempt-weekly-',
+    'settlement-message',
+  ];
+
+  assert.match(source, /已豁免/);
+  assert.match(source, /清算审阅已过期/);
+  for (const selector of selectors) {
+    assert.match(source, new RegExp(selector));
+  }
+});
