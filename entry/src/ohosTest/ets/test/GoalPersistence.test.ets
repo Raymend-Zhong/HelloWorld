@@ -216,11 +216,15 @@ export default function goalPersistenceTest(): void {
         expect(copied.ok).assertTrue();
         if (copied.ok === false || copied.value.taskId === undefined) return;
         const taskId = copied.value.taskId;
+        const weeklyCopied = await module.execute(parent.value.token, { type: 'copy-task-template', childId: 'guoguo', templateId: 'junior-reading' });
+        expect(weeklyCopied.ok).assertTrue();
+        if (weeklyCopied.ok === false || weeklyCopied.value.taskId === undefined) return;
+        const weeklyTaskId = weeklyCopied.value.taskId;
         const created = await module.execute(parent.value.token, { type: 'create-goal', childId: 'guoguo', businessDate: '2026-09-14',
           name: '豁免目标', description: '真实持久化', threshold: 100, plannedDays: 30, reward: '奖励', activityId: 'cat',
           tasks: [
             { taskId, weekdays: [1], rules: { completionPoints: 6, missedPolicy: 'deduct', deductionPoints: 2, streakEnabled: false, streakCap: null } },
-            { taskId, plan: { kind: 'weekly-frequency', requiredCount: 2 },
+            { taskId: weeklyTaskId, plan: { kind: 'weekly-frequency', requiredCount: 2 },
               rules: { completionPoints: 8, missedPolicy: 'deduct', deductionPoints: 3, streakEnabled: false, streakCap: null } },
           ] });
         expect(created.ok).assertTrue();
@@ -230,7 +234,7 @@ export default function goalPersistenceTest(): void {
         expect((await module.execute(parent.value.token, { type: 'exempt-date-task', childId: 'guoguo', taskId, businessDate: '2026-09-14' })).ok).assertTrue();
         const staleConfirm = await module.execute(parent.value.token, { type: 'confirm-settlement', childId: 'guoguo', businessDate: '2026-09-14', expectedRevision: stalePreview.value.revision });
         expect(staleConfirm.ok).assertFalse();
-        expect((await module.execute(parent.value.token, { type: 'exempt-weekly-task', childId: 'guoguo', taskId, weekOf: '2026-09-21' })).ok).assertTrue();
+        expect((await module.execute(parent.value.token, { type: 'exempt-weekly-task', childId: 'guoguo', taskId: weeklyTaskId, weekOf: '2026-09-21' })).ok).assertTrue();
         adapter.close();
         adapter = await ArkDataPersistenceAdapter.open(ability.context, storeName);
         const restarted = await FamilyHabitModule.create(adapter, hasher);

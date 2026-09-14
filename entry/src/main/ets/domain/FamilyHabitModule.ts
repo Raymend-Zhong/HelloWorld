@@ -559,6 +559,9 @@ export class FamilyHabitModule {
       }
       const task = (this.state.taskPool ?? []).find(item => item.id === command.taskId && item.childId === command.childId);
       if (task === undefined) return { ok: false, error: { code: 'TASK_NOT_FOUND', message: '没有找到这个任务池任务。' } };
+      if (!this.hasApplicableTaskPlan(this.state, command.childId, command.taskId, command.businessDate, 'date-weekdays')) {
+        return { ok: false, error: { code: 'PLAN_NOT_APPLICABLE', message: '该任务计划不能使用这种豁免方式。' } };
+      }
       if ((this.state.settlements ?? []).some(settlement => settlement.active
         && settlement.childId === command.childId
         && settlement.businessDate === command.businessDate)) {
@@ -585,6 +588,9 @@ export class FamilyHabitModule {
       const task = (this.state.taskPool ?? []).find(item => item.id === command.taskId && item.childId === command.childId);
       if (task === undefined) return { ok: false, error: { code: 'TASK_NOT_FOUND', message: '没有找到这个任务池任务。' } };
       const bounds = weekBounds(command.weekOf);
+      if (!this.hasApplicableTaskPlan(this.state, command.childId, command.taskId, command.weekOf, 'weekly-frequency')) {
+        return { ok: false, error: { code: 'PLAN_NOT_APPLICABLE', message: '该任务计划不能使用这种豁免方式。' } };
+      }
       if ((this.state.settlements ?? []).some(settlement => settlement.active
         && settlement.childId === command.childId
         && settlement.businessDate >= bounds.start
@@ -785,6 +791,24 @@ export class FamilyHabitModule {
       && exemption.childId === childId
       && exemption.taskId === taskId
       && exemption.businessDate === businessDate);
+  }
+
+  private hasApplicableTaskPlan(
+    state: FamilyState,
+    childId: ChildId,
+    taskId: string,
+    businessDate: string,
+    planKind: 'date-weekdays' | 'weekly-frequency',
+  ): boolean {
+    const weekday = new Date(`${businessDate}T00:00:00.000Z`).getUTCDay() || 7;
+    return (state.goals ?? []).some(goal => goal.childId === childId
+      && goal.status === 'active'
+      && goal.startDate <= businessDate
+      && goal.tasks.some(task => {
+        if (task.taskId !== taskId) return false;
+        const plan = task.plan ?? { kind: 'date-weekdays' as const, weekdays: task.weekdays };
+        return plan.kind === planKind && (plan.kind === 'weekly-frequency' || plan.weekdays.includes(weekday));
+      }));
   }
 
   private hasWeeklyExemption(state: FamilyState, childId: ChildId, taskId: string, weekStart: string, weekEnd: string): boolean {

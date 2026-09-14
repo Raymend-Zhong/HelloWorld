@@ -230,3 +230,63 @@ test('[TASK-9-S03][AC-31] 打卡、豁免或规则变化后旧清算审阅不能
   assert.equal(stale.ok, false);
   if (!stale.ok) assert.equal(stale.error.code, 'SETTLEMENT_PREVIEW_EXPIRED');
 });
+
+test('[TASK-9-S04][AC-20] 日期任务和频率任务只能使用对应豁免方式', async () => {
+  const { module, parent, taskId } = await family();
+  const weeklyTaskId = value(await module.execute(parent.token, {
+    type: 'copy-task-template',
+    childId: 'guoguo',
+    templateId: 'junior-reading',
+  })).taskId!;
+  value(await module.execute(parent.token, {
+    type: 'create-goal',
+    childId: 'guoguo',
+    businessDate: '2026-09-14',
+    name: '日期任务目标',
+    description: '验证豁免方式',
+    threshold: 100,
+    plannedDays: 30,
+    reward: '奖励',
+    activityId: 'cat',
+    tasks: [{ taskId, weekdays: [1], rules: { completionPoints: 5, missedPolicy: 'no-points', deductionPoints: 0, streakEnabled: false, streakCap: null } }],
+  }));
+  value(await module.execute(parent.token, {
+    type: 'create-goal',
+    childId: 'guoguo',
+    businessDate: '2026-09-14',
+    name: '频率任务目标',
+    description: '验证豁免方式',
+    threshold: 100,
+    plannedDays: 30,
+    reward: '奖励',
+    activityId: 'tree',
+    tasks: [{
+      taskId: weeklyTaskId,
+      plan: { kind: 'weekly-frequency', requiredCount: 2 },
+      rules: { completionPoints: 5, missedPolicy: 'no-points', deductionPoints: 0, streakEnabled: false, streakCap: null },
+    }],
+  }));
+  const before = value(await module.inspect(parent.token, { type: 'family-overview' })).revision;
+
+  const invalidWeekly = await module.execute(parent.token, {
+    type: 'exempt-weekly-task',
+    childId: 'guoguo',
+    taskId,
+    weekOf: '2026-09-14',
+  });
+  assert.equal(invalidWeekly.ok, false);
+  if (!invalidWeekly.ok) {
+    assert.equal(invalidWeekly.error.code, 'PLAN_NOT_APPLICABLE');
+    assert.equal(invalidWeekly.error.message, '该任务计划不能使用这种豁免方式。');
+  }
+
+  const invalidDate = await module.execute(parent.token, {
+    type: 'exempt-date-task',
+    childId: 'guoguo',
+    taskId: weeklyTaskId,
+    businessDate: '2026-09-14',
+  });
+  assert.equal(invalidDate.ok, false);
+  if (!invalidDate.ok) assert.equal(invalidDate.error.code, 'PLAN_NOT_APPLICABLE');
+  assert.equal(value(await module.inspect(parent.token, { type: 'family-overview' })).revision, before);
+});
