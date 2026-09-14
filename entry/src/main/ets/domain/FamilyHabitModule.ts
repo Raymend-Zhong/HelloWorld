@@ -40,6 +40,7 @@ export interface SettlementRecord {
   businessDate: string;
   revision: number;
   goals: SettlementGoalPreview[];
+  taskRules?: Record<string, TaskRules>;
   active: boolean;
 }
 
@@ -137,6 +138,7 @@ export type DomainCommand =
   | { type: 'manage-goal' }
   | { type: 'exempt-task' }
   | { type: 'terminate-goal'; childId: ChildId; goalId: string }
+  | { type: 'revoke-settlement'; childId: ChildId; businessDate: string }
   | { type: 'confirm-settlement'; childId: ChildId; businessDate: string; expectedRevision: number };
 
 export interface ExecuteReceipt {
@@ -173,7 +175,15 @@ export interface SettlementPreview {
   revision: number;
 }
 
+export interface SettlementHistory {
+  childId: ChildId;
+  businessDate: string;
+  settlements: SettlementRecord[];
+  revision: number;
+}
+
 export type InspectRequest =
+  | { type: 'settlement-history'; childId: ChildId; businessDate: string }
   | { type: 'settlement-preview'; childId: ChildId; businessDate: string }
   | { type: 'growth-activities' }
   | { type: 'child-day'; childId: ChildId; businessDate: string }
@@ -208,7 +218,7 @@ export interface TaskPoolSnapshot {
   revision: number;
 }
 
-export type InspectSnapshot = ActivitySnapshot | ChildDay | GoalList | GoalDetail | SettlementPreview | FamilyOverview | ChildHome | TemplateSnapshot | TaskPoolSnapshot;
+export type InspectSnapshot = ActivitySnapshot | ChildDay | GoalList | GoalDetail | SettlementPreview | SettlementHistory | FamilyOverview | ChildHome | TemplateSnapshot | TaskPoolSnapshot;
 
 const INITIAL_CHILDREN: ChildProfile[] = [
   {
@@ -250,13 +260,17 @@ function cloneGoalTaskInput<T extends GoalInput['tasks'][number]>(task: T): T {
 }
 
 function cloneSettlement(settlement: SettlementRecord): SettlementRecord {
-  return {
+  const copy: SettlementRecord = {
     ...settlement,
     goals: settlement.goals.map(goal => ({
       ...goal,
       results: goal.results.map(result => ({ ...result })),
     })),
   };
+  if (settlement.taskRules !== undefined) {
+    copy.taskRules = Object.fromEntries(Object.entries(settlement.taskRules).map(([taskId, rules]) => [taskId, { ...rules }]));
+  }
+  return copy;
 }
 
 function dateFromEpochDay(epochDay: number): string {
@@ -551,6 +565,7 @@ export class FamilyHabitModule {
         childId: command.childId,
         businessDate: command.businessDate,
         revision: nextState.revision,
+        taskRules: this.settlementTaskRules(nextState, command.childId, preview.goals),
         goals: preview.goals.map(goal => ({
           ...goal,
           results: goal.results.map(result => ({ ...result })),
@@ -558,9 +573,26 @@ export class FamilyHabitModule {
         active: true,
       };
       nextState.settlements = [...(nextState.settlements ?? []), settlement];
+      this.recalculateActiveSettlements(nextState, command.childId);
       const saved = await this.saveState(nextState);
       if (!saved.ok) return saved;
       return { ok: true, value: { ...saved.value, settlementId: settlement.id } };
+    }
+    if (command.type === 'revoke-settlement') {
+      if (!validBusinessDate(command.businessDate)) {
+        return { ok: false, error: { code: 'VALIDATION_FAILED', field: 'businessDate', message: '请选择有效的业务日期。' } };
+      }
+      const nextState = cloneState(this.state);
+      const settlement = (nextState.settlements ?? []).find(item => item.active
+        && item.childId === command.childId
+        && item.businessDate === command.businessDate);
+      if (settlement === undefined) {
+        return { ok: false, error: { code: 'SETTLEMENT_NOT_FOUND', message: '没有找到这一天的有效清算。' } };
+      }
+      settlement.active = false;
+      nextState.revision += 1;
+      this.recalculateActiveSettlements(nextState, command.childId);
+      return this.saveState(nextState);
     }
     if (command.type === 'exempt-date-task') {
       if (!validBusinessDate(command.businessDate)) {
@@ -767,8 +799,10 @@ export class FamilyHabitModule {
     for (const settlement of this.state.settlements ?? []) {
       if (!settlement.active || settlement.childId !== checkin.childId) continue;
       if (settlement.businessDate === checkin.businessDate) return true;
-      const settledTaskIds = settlement.goals.flatMap(goal => goal.results.map(result => result.taskId));
-      if (!settledTaskIds.includes(checkin.taskId)) continue;
+      const settledWeeklyTaskIds = settlement.goals.flatMap(goal => goal.results
+        .filter(result => result.planKind === 'weekly-frequency')
+        .map(result => result.taskId));
+      if (!settledWeeklyTaskIds.includes(checkin.taskId)) continue;
       const bounds = weekBounds(settlement.businessDate);
       if (checkin.businessDate >= bounds.start && checkin.businessDate <= bounds.end) return true;
     }
@@ -911,7 +945,88 @@ export class FamilyHabitModule {
     };
   }
 
+  private recalculateActiveSettlements(state: FamilyState, childId: ChildId): void {
+    for (const goal of state.goals ?? []) {
+      if (goal.childId !== childId) continue;
+      goal.points = 0;
+      goal.highestPoints = 0;
+      if (goal.status === 'achieved') goal.status = 'active';
+      for (const task of goal.tasks) task.streakCount = 0;
+    }
+    const settlements = (state.settlements ?? [])
+      .filter(settlement => settlement.active && settlement.childId === childId)
+      .sort((left, right) => left.businessDate.localeCompare(right.businessDate) || left.revision - right.revision);
+    for (const settlement of settlements) {
+      settlement.goals = settlement.goals.map(goalPreview => {
+        const goal = (state.goals ?? []).find(item => item.id === goalPreview.goalId && item.childId === childId);
+        const pointsBefore = goal?.points ?? goalPreview.pointsBefore;
+        const results = goalPreview.results.map(result => {
+          const goalTask = goal?.tasks.find(task => task.taskId === result.taskId);
+          const rules = settlement.taskRules?.[this.settlementTaskRuleKey(goalPreview.goalId, result.taskId)] ?? goalTask?.rules;
+          return {
+            ...result,
+            pointsDelta: rules === undefined
+              ? result.pointsDelta
+              : this.recalculateTaskPoints(result, goalTask?.streakCount ?? 0, rules),
+          };
+        });
+        const netDelta = results.reduce((sum, result) => sum + result.pointsDelta, 0);
+        return {
+          ...goalPreview,
+          netDelta,
+          pointsBefore,
+          pointsAfter: Math.max(0, pointsBefore + netDelta),
+          results,
+        };
+      });
+      for (const goalPreview of settlement.goals) {
+        const goal = (state.goals ?? []).find(item => item.id === goalPreview.goalId && item.childId === childId);
+        if (goal === undefined) continue;
+        goal.points = goalPreview.pointsAfter;
+        goal.highestPoints = Math.max(goal.highestPoints, goal.points);
+        if (goal.points >= goal.threshold) goal.status = 'achieved';
+        for (const result of goalPreview.results) {
+          const goalTask = goal.tasks.find(task => task.taskId === result.taskId);
+          if (goalTask === undefined || !goalTask.rules.streakEnabled || result.status === 'exempted') continue;
+          goalTask.streakCount = result.status === 'completed' ? (goalTask.streakCount ?? 0) + 1 : 0;
+        }
+      }
+    }
+  }
+
+  private settlementTaskRules(
+    state: FamilyState,
+    childId: ChildId,
+    goals: SettlementGoalPreview[],
+  ): Record<string, TaskRules> {
+    const rules: Record<string, TaskRules> = {};
+    for (const preview of goals) {
+      const goal = (state.goals ?? []).find(item => item.id === preview.goalId && item.childId === childId);
+      for (const result of preview.results) {
+        const task = goal?.tasks.find(item => item.taskId === result.taskId);
+        if (task !== undefined) rules[this.settlementTaskRuleKey(preview.goalId, result.taskId)] = { ...task.rules };
+      }
+    }
+    return rules;
+  }
+
+  private settlementTaskRuleKey(goalId: string, taskId: string): string {
+    return `${goalId}:${taskId}`;
+  }
+
+  private recalculateTaskPoints(
+    result: SettlementTaskResult,
+    streakCount: number,
+    rules: TaskRules,
+  ): number {
+    if (result.status === 'exempted') return 0;
+    if (result.status === 'missed') return rules.missedPolicy === 'deduct' ? -rules.deductionPoints : 0;
+    const streakBonus = Math.min(rules.streakCap ?? Number.MAX_SAFE_INTEGER, streakCount);
+    return rules.completionPoints + (rules.streakEnabled ? streakBonus : 0);
+  }
+
   async inspect(token: string, request: { type: 'growth-activities' }): Promise<Result<ActivitySnapshot>>;
+  async inspect(token: string, request: { type: 'settlement-history'; childId: ChildId; businessDate: string }): Promise<Result<SettlementHistory>>;
   async inspect(token: string, request: { type: 'settlement-preview'; childId: ChildId; businessDate: string }): Promise<Result<SettlementPreview>>;
   async inspect(token: string, request: { type: 'child-day'; childId: ChildId; businessDate: string }): Promise<Result<ChildDay>>;
   async inspect(token: string, request: { type: 'goal-list'; childId: ChildId }): Promise<Result<GoalList>>;
@@ -941,7 +1056,7 @@ export class FamilyHabitModule {
       };
     }
     if (request.type === 'growth-activities') return { ok: true, value: { activities: builtInActivities() } };
-    if (request.type === 'goal-detail' || request.type === 'goal-list' || request.type === 'child-day' || request.type === 'settlement-preview') {
+    if (request.type === 'goal-detail' || request.type === 'goal-list' || request.type === 'child-day' || request.type === 'settlement-preview' || request.type === 'settlement-history') {
       if (session.role !== 'parent' && (session.role !== 'child' || session.childId !== request.childId)) {
         return { ok: false, error: { code: 'PERMISSION_DENIED', message: '请从对应孩子入口查看目标。' } };
       }
@@ -955,6 +1070,21 @@ export class FamilyHabitModule {
       }
       if (!validBusinessDate(request.businessDate)) return { ok: false, error: { code: 'VALIDATION_FAILED', field: 'businessDate', message: '请选择有效的业务日期。' } };
       return { ok: true, value: this.buildSettlementPreview(request.childId, request.businessDate, this.state) };
+    }
+    if (request.type === 'settlement-history') {
+      if (session.role !== 'parent') {
+        return { ok: false, error: { code: 'PERMISSION_DENIED', message: '这个操作需要家长来完成。' } };
+      }
+      if (!validBusinessDate(request.businessDate)) return { ok: false, error: { code: 'VALIDATION_FAILED', field: 'businessDate', message: '请选择有效的业务日期。' } };
+      return { ok: true, value: {
+        childId: request.childId,
+        businessDate: request.businessDate,
+        settlements: (this.state.settlements ?? [])
+          .filter(settlement => settlement.childId === request.childId && settlement.businessDate === request.businessDate)
+          .sort((left, right) => left.revision - right.revision)
+          .map(cloneSettlement),
+        revision: this.state.revision,
+      } };
     }
     if (request.type === 'child-day') {
       if (!validBusinessDate(request.businessDate)) return { ok: false, error: { code: 'VALIDATION_FAILED', field: 'businessDate', message: '请选择有效的业务日期。' } };
