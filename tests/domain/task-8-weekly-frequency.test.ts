@@ -215,3 +215,50 @@ test('[TASK-8-S03][AC-19] 频率任务到周日仍未达标时产生一次未完
   }));
   assert.equal(preview.goals[0]?.results[0]?.pointsDelta, 5);
 });
+
+test('[TASK-8-S04][AC-18] 已计入频率周期清算的早期打卡不能被孩子撤销', async () => {
+  const { module, parent, child, taskId } = await family();
+  value(await module.execute(parent.token, {
+    type: 'create-goal',
+    childId: 'guoguo',
+    businessDate: '2026-09-14',
+    name: '每周练习',
+    description: '两次达标',
+    threshold: 100,
+    plannedDays: 30,
+    reward: '奖励',
+    activityId: 'cat',
+    tasks: [{
+      taskId,
+      plan: { kind: 'weekly-frequency', requiredCount: 2 },
+      rules: {
+        completionPoints: 6,
+        missedPolicy: 'no-points',
+        deductionPoints: 0,
+        streakEnabled: false,
+        streakCap: null,
+      },
+    }],
+  }));
+  const monday = value(await module.execute(child.token, { type: 'submit-checkin', childId: 'guoguo', taskId, businessDate: '2026-09-14' })).checkinId!;
+  value(await module.execute(child.token, { type: 'submit-checkin', childId: 'guoguo', taskId, businessDate: '2026-09-16' }));
+  const preview = value(await module.inspect(parent.token, {
+    type: 'settlement-preview',
+    childId: 'guoguo',
+    businessDate: '2026-09-16',
+  }));
+  value(await module.execute(parent.token, {
+    type: 'confirm-settlement',
+    childId: 'guoguo',
+    businessDate: '2026-09-16',
+    expectedRevision: preview.revision,
+  }));
+
+  const revoked = await module.execute(child.token, {
+    type: 'revoke-checkin',
+    childId: 'guoguo',
+    checkinId: monday,
+  });
+  assert.equal(revoked.ok, false);
+  if (!revoked.ok) assert.equal(revoked.error.code, 'DATE_ALREADY_SETTLED');
+});

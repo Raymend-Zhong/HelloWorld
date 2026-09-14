@@ -483,9 +483,7 @@ export class FamilyHabitModule {
       const nextState = cloneState(this.state);
       const checkin = (nextState.checkins ?? []).find(item => item.id === command.checkinId && item.childId === command.childId);
       if (checkin === undefined) return { ok: false, error: { code: 'CHECKIN_NOT_FOUND', message: '没有找到这条打卡记录。' } };
-      if ((this.state.settlements ?? []).some(settlement => settlement.active
-        && settlement.childId === command.childId
-        && settlement.businessDate === checkin.businessDate)) {
+      if (this.checkinBelongsToActiveSettlement(checkin)) {
         return { ok: false, error: { code: 'DATE_ALREADY_SETTLED', message: '该日期已清算，请联系家长先撤销清算。' } };
       }
       checkin.active = false;
@@ -643,6 +641,18 @@ export class FamilyHabitModule {
     const receipt: ExecuteReceipt = { revision: nextState.revision };
     if (taskId !== undefined) receipt.taskId = taskId;
     return { ok: true, value: receipt };
+  }
+
+  private checkinBelongsToActiveSettlement(checkin: CheckinRecord): boolean {
+    for (const settlement of this.state.settlements ?? []) {
+      if (!settlement.active || settlement.childId !== checkin.childId) continue;
+      if (settlement.businessDate === checkin.businessDate) return true;
+      const settledTaskIds = settlement.goals.flatMap(goal => goal.results.map(result => result.taskId));
+      if (!settledTaskIds.includes(checkin.taskId)) continue;
+      const bounds = weekBounds(settlement.businessDate);
+      if (checkin.businessDate >= bounds.start && checkin.businessDate <= bounds.end) return true;
+    }
+    return false;
   }
 
   private buildSettlementPreview(childId: ChildId, businessDate: string, state: FamilyState): SettlementPreview {
