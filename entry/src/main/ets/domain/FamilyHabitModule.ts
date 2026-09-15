@@ -8,6 +8,7 @@ export interface ChildProfile {
   displayName: string;
   avatar: string;
   theme: string;
+  teacher?: string;
 }
 
 export interface ParentCredential {
@@ -131,6 +132,7 @@ export type DomainCommand =
   | { type: 'revoke-checkin'; childId: ChildId; checkinId: string }
   | { type: 'submit-checkin'; childId: ChildId; taskId: string; businessDate: string }
   | { type: 'set-parent-password'; password: string }
+  | { type: 'update-child-profile'; childId: ChildId; displayName: string; avatar: string; theme: string; teacher: string }
   | { type: 'disable-task-pool-task'; childId: ChildId; taskId: string }
   | { type: 'edit-task-pool-task'; childId: ChildId; taskId: string; name: string; description: string; defaultRules: TaskRules }
   | { type: 'copy-task-template'; childId: ChildId; templateId: string }
@@ -153,7 +155,13 @@ export interface ScheduledTask { taskId: string; name: string; description: stri
 export interface ChildDay { currentChild: ChildProfile; businessDate: string; tasks: ScheduledTask[]; goals: Goal[]; revision: number; }
 export interface ActivitySnapshot { activities: GrowthActivity[]; }
 export interface GoalList { goals: Goal[]; revision: number; }
-export interface GoalDetail { goal: Goal; revision: number; }
+export interface GrowthSnapshot {
+  activityId: string;
+  currentPoints: number;
+  highestPoints: number;
+  progressPercent: number;
+}
+export interface GoalDetail { goal: Goal; growth: GrowthSnapshot; revision: number; }
 export interface SettlementTaskResult {
   taskId: string;
   planKind: 'date-weekdays' | 'weekly-frequency';
@@ -167,6 +175,12 @@ export interface SettlementGoalPreview {
   netDelta: number;
   pointsBefore: number;
   pointsAfter: number;
+  feedback?: SettlementFeedbackStep[] | undefined;
+}
+export interface SettlementFeedbackStep {
+  kind: 'reward' | 'encouragement' | 'penalty' | 'discipline' | 'summary' | 'growth';
+  text: string;
+  once: boolean;
 }
 export interface SettlementPreview {
   childId: ChildId;
@@ -226,12 +240,14 @@ const INITIAL_CHILDREN: ChildProfile[] = [
     displayName: '果果',
     avatar: 'guoguo',
     theme: 'mature',
+    teacher: 'calm',
   },
   {
     id: 'yangyang',
     displayName: '阳阳',
     avatar: 'yangyang',
     theme: 'playful',
+    teacher: 'storybook',
   },
 ];
 
@@ -265,6 +281,7 @@ function cloneSettlement(settlement: SettlementRecord): SettlementRecord {
     goals: settlement.goals.map(goal => ({
       ...goal,
       results: goal.results.map(result => ({ ...result })),
+      feedback: goal.feedback?.map(step => ({ ...step })),
     })),
   };
   if (settlement.taskRules !== undefined) {
@@ -357,6 +374,9 @@ export class FamilyHabitModule {
       children: INITIAL_CHILDREN.map((child) => ({ ...child })),
       parentCredential: null,
     } : cloneState(stored);
+    for (const child of state.children) {
+      child.teacher = child.teacher ?? (child.id === 'guoguo' ? 'calm' : 'storybook');
+    }
     if (stored === null || state.schemaVersion < 6 || (state.templateSeedVersion ?? 0) < TEMPLATE_SEED_VERSION) {
       state.schemaVersion = 6;
       state.goals = state.goals ?? [];
@@ -518,6 +538,28 @@ export class FamilyHabitModule {
       if (!saved.ok) return saved;
       return { ok: true, value: { ...saved.value, checkinId: checkin.id } };
     }
+    if (command.type === 'update-child-profile') {
+      if (!this.state.children.some(child => child.id === command.childId)) {
+        return { ok: false, error: { code: 'CHILD_NOT_FOUND', message: '没有找到这个孩子账套。' } };
+      }
+      if (command.displayName.trim().length === 0) {
+        return { ok: false, error: { code: 'VALIDATION_FAILED', field: 'displayName', message: '请输入孩子昵称。' } };
+      }
+      if (!['mature', 'playful', 'focus'].includes(command.theme)) {
+        return { ok: false, error: { code: 'VALIDATION_FAILED', field: 'theme', message: '请选择内置主题。' } };
+      }
+      if (!['calm', 'storybook'].includes(command.teacher)) {
+        return { ok: false, error: { code: 'VALIDATION_FAILED', field: 'teacher', message: '请选择内置老师形象。' } };
+      }
+      const nextState = cloneState(this.state);
+      const child = nextState.children.find(item => item.id === command.childId)!;
+      child.displayName = command.displayName.trim();
+      child.avatar = command.avatar;
+      child.theme = command.theme;
+      child.teacher = command.teacher;
+      nextState.revision += 1;
+      return this.saveState(nextState);
+    }
     if (command.type === 'revoke-checkin') {
       if (session.role === 'child' && session.childId !== command.childId) {
         return { ok: false, error: { code: 'PERMISSION_DENIED', message: '请从对应孩子入口撤销打卡。' } };
@@ -569,6 +611,7 @@ export class FamilyHabitModule {
         goals: preview.goals.map(goal => ({
           ...goal,
           results: goal.results.map(result => ({ ...result })),
+          feedback: this.buildSettlementFeedbackForPreview(nextState, command.childId, goal),
         })),
         active: true,
       };
@@ -849,15 +892,91 @@ export class FamilyHabitModule {
       }
       if (results.length === 0) continue;
       const netDelta = results.reduce((sum, result) => sum + result.pointsDelta, 0);
+      const pointsAfter = Math.max(0, goal.points + netDelta);
       goals.push({
         goalId: goal.id,
         results,
         netDelta,
         pointsBefore: goal.points,
-        pointsAfter: Math.max(0, goal.points + netDelta),
+        pointsAfter,
       });
     }
     return { childId, businessDate, goals, revision: state.revision };
+  }
+
+  private buildSettlementFeedback(
+    state: FamilyState,
+    childId: ChildId,
+    goal: Goal,
+    results: SettlementTaskResult[],
+    netDelta: number,
+    pointsAfter: number,
+  ): SettlementFeedbackStep[] {
+    const child = state.children.find(item => item.id === childId);
+    const displayName = child?.displayName ?? '孩子';
+    const activityName = builtInActivities().find(activity => activity.id === goal.activityId)?.name ?? '虚拟伙伴';
+    const activitySubject = activityName.replace(/^(养|种)/, '');
+    const taskName = (taskId: string): string => (state.taskPool ?? []).find(task => task.id === taskId && task.childId === childId)?.name ?? '任务';
+    const feedback: SettlementFeedbackStep[] = [];
+    const rewards = results.filter(result => result.pointsDelta > 0);
+    const penalties = results.filter(result => result.pointsDelta < 0);
+    for (const result of rewards) {
+      feedback.push({
+        kind: 'reward',
+        once: false,
+        text: `${taskName(result.taskId)}完成了，获得 ${result.pointsDelta} 分。`,
+      });
+    }
+    if (rewards.length > 0) {
+      feedback.push({
+        kind: 'encouragement',
+        once: true,
+        text: `${displayName}保持得很稳，给${activitySubject}一次鼓励。`,
+      });
+    }
+    for (const result of penalties) {
+      feedback.push({
+        kind: 'penalty',
+        once: false,
+        text: `${taskName(result.taskId)}没有完成，扣 ${Math.abs(result.pointsDelta)} 分。`,
+      });
+    }
+    if (penalties.length > 0) {
+      feedback.push({
+        kind: 'discipline',
+        once: true,
+        text: `${displayName}需要记住这次后果，${activitySubject}接受一次提醒。`,
+      });
+    }
+    const highestPoints = Math.max(goal.highestPoints, pointsAfter);
+    feedback.push({
+      kind: 'summary',
+      once: false,
+      text: `本次净变化 ${netDelta} 分，累计 ${pointsAfter} / ${goal.threshold} 分。`,
+    });
+    feedback.push({
+      kind: 'growth',
+      once: false,
+      text: `虚拟成长进度 ${Math.min(100, Math.floor((highestPoints / goal.threshold) * 100))}%，最高积分 ${highestPoints} 分。`,
+    });
+    return feedback;
+  }
+
+  private buildSettlementFeedbackForPreview(
+    state: FamilyState,
+    childId: ChildId,
+    preview: SettlementGoalPreview,
+  ): SettlementFeedbackStep[] {
+    const goal = (state.goals ?? []).find(item => item.id === preview.goalId && item.childId === childId);
+    if (goal === undefined) return [];
+    return this.buildSettlementFeedback(
+      state,
+      childId,
+      goal,
+      preview.results,
+      preview.netDelta,
+      preview.pointsAfter,
+    );
   }
 
   private hasDateExemption(state: FamilyState, childId: ChildId, taskId: string, businessDate: string): boolean {
@@ -1122,7 +1241,7 @@ export class FamilyHabitModule {
     if (request.type === 'goal-detail') {
       const goal = (this.state.goals ?? []).find(item => item.id === request.goalId && item.childId === request.childId);
       if (goal === undefined) return { ok: false, error: { code: 'GOAL_NOT_FOUND', message: '没有找到这个打卡目标。' } };
-      return { ok: true, value: { goal: cloneGoal(goal), revision: this.state.revision } };
+      return { ok: true, value: { goal: cloneGoal(goal), growth: this.buildGrowthSnapshot(goal), revision: this.state.revision } };
     }
     if (request.type === 'task-pool') {
       if (session.role !== 'parent' && (session.role !== 'child' || session.childId !== request.childId)) {
@@ -1170,6 +1289,15 @@ export class FamilyHabitModule {
     return {
       ok: false,
       error: { code: 'QUERY_UNSUPPORTED', message: '暂不支持此查询。' },
+    };
+  }
+
+  private buildGrowthSnapshot(goal: Goal): GrowthSnapshot {
+    return {
+      activityId: goal.activityId,
+      currentPoints: goal.points,
+      highestPoints: goal.highestPoints,
+      progressPercent: Math.min(100, Math.floor((goal.highestPoints / goal.threshold) * 100)),
     };
   }
 }

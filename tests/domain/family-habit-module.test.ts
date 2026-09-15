@@ -158,6 +158,7 @@ test('[TASK-3][AC-02][AC-03] 孩子免密码进入并切换到清楚标识的孩
     displayName: '果果',
     avatar: 'guoguo',
     theme: 'mature',
+    teacher: 'calm',
   });
   assert.deepEqual(guoguoView.tasks, []);
   assert.deepEqual(guoguoView.goals, []);
@@ -178,6 +179,7 @@ test('[TASK-3][AC-02][AC-03] 孩子免密码进入并切换到清楚标识的孩
   assert.equal(yangyangView.currentChild.id, 'yangyang');
   assert.equal(yangyangView.currentChild.displayName, '阳阳');
   assert.equal(yangyangView.currentChild.theme, 'playful');
+  assert.equal(yangyangView.currentChild.teacher, 'storybook');
 });
 
 test('[TASK-3][AC-05] 孩子执行家长命令会被拒绝且领域状态不变', async () => {

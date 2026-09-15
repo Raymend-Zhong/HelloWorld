@@ -10,9 +10,10 @@ import {
   SettlementPreview,
   SettlementGoalPreview,
   SettlementTaskResult,
+  ChildProfile,
 } from '../domain/FamilyHabitModule';
 
-type Screen = 'entry' | 'child' | 'parent-auth' | 'parent' | 'task-pool' | 'goals' | 'settlement';
+type Screen = 'entry' | 'child' | 'parent-auth' | 'parent' | 'task-pool' | 'goals' | 'settlement' | 'child-profile';
 
 @Entry
 @Component
@@ -25,6 +26,7 @@ struct Index {
   @State private currentChildId: ChildId = 'guoguo';
   @State private currentChildName: string = '';
   @State private currentTheme: string = 'mature';
+  @State private currentTeacher: string = 'calm';
   @State private password: string = '';
   @State private message: string = '';
   private parentToken: string = '';
@@ -34,6 +36,12 @@ struct Index {
   @State private settlementChildId: ChildId = 'guoguo';
   @State private settlementDate: string = localBusinessDate();
   @State private settlementPreview: SettlementPreview | null = null;
+  @State private familyChildren: ChildProfile[] = [];
+  @State private profileChildId: ChildId = 'guoguo';
+  @State private profileName: string = '果果';
+  @State private profileAvatar: string = 'guoguo';
+  @State private profileTheme: string = 'mature';
+  @State private profileTeacher: string = 'calm';
   private parentSetupSession: ParentSetupSession | null = null;
 
   private async openChild(childId: ChildId): Promise<void> {
@@ -63,6 +71,7 @@ struct Index {
     this.currentChildId = home.currentChild.id;
     this.currentChildName = home.currentChild.displayName;
     this.currentTheme = home.currentChild.theme;
+    this.currentTeacher = home.currentChild.teacher ?? 'calm';
     this.message = '';
     this.screen = 'child';
   }
@@ -147,7 +156,22 @@ struct Index {
       return;
     }
     this.message = '清算已确认。';
-    await this.reviewSettlement();
+    const history = await this.module.inspect(this.parentToken, {
+      type: 'settlement-history',
+      childId: this.settlementPreview.childId,
+      businessDate: this.settlementPreview.businessDate,
+    });
+    if (history.ok) {
+      const active = history.value.settlements.find(item => item.active);
+      if (active !== undefined) {
+        this.settlementPreview = {
+          childId: active.childId,
+          businessDate: active.businessDate,
+          goals: active.goals,
+          revision: history.value.revision,
+        };
+      }
+    }
   }
 
   private async exemptSettlementResult(result: SettlementTaskResult, weekly: boolean): Promise<void> {
@@ -193,6 +217,47 @@ struct Index {
     if (result.status === 'completed') return '已完成';
     if (result.status === 'exempted') return '已豁免';
     return '未完成';
+  }
+
+  private async openChildProfile(): Promise<void> {
+    const previousMessage = this.message;
+    const overview = await this.module.inspect(this.parentToken, { type: 'family-overview' });
+    if (overview.ok === false) {
+      this.message = overview.error.message;
+      return;
+    }
+    this.familyChildren = overview.value.children;
+    this.pickProfileChild('guoguo');
+    this.message = previousMessage;
+    this.screen = 'child-profile';
+  }
+
+  private pickProfileChild(childId: ChildId): void {
+    const child = this.familyChildren.find(item => item.id === childId);
+    if (child === undefined) return;
+    this.profileChildId = child.id;
+    this.profileName = child.displayName;
+    this.profileAvatar = child.avatar;
+    this.profileTheme = child.theme;
+    this.profileTeacher = child.teacher ?? (child.id === 'guoguo' ? 'calm' : 'storybook');
+    this.message = '';
+  }
+
+  private async saveChildProfile(): Promise<void> {
+    const result = await this.module.execute(this.parentToken, {
+      type: 'update-child-profile',
+      childId: this.profileChildId,
+      displayName: this.profileName,
+      avatar: this.profileAvatar,
+      theme: this.profileTheme,
+      teacher: this.profileTeacher,
+    });
+    if (result.ok === false) {
+      this.message = result.error.message;
+      return;
+    }
+    this.message = '孩子资料已保存。';
+    await this.openChildProfile();
   }
 
   private async openParentEntry(): Promise<void> {
@@ -289,8 +354,14 @@ struct Index {
 
       Text(this.currentTheme === 'mature'
         ? '今天也稳稳完成自己的计划吧。'
-        : '今天又能让小伙伴长大一点啦！')
+        : this.currentTheme === 'focus'
+          ? '专注一点点，成长就会看得见。'
+          : '今天又能让小伙伴长大一点啦！')
         .fontSize(21)
+        .fontColor('#65584F')
+      Text(this.currentTeacher === 'calm' ? '沉稳老师陪你复盘。' : '故事老师陪你闯关。')
+        .id('child-teacher')
+        .fontSize(18)
         .fontColor('#65584F')
 
       Row({ space: 16 }) {
@@ -333,6 +404,9 @@ struct Index {
             Column({ space: 8 }) {
               Text(goal.name).id(`child-goal-${goal.id}`).fontSize(24).fontWeight(FontWeight.Bold)
               Text(`${goal.points} / ${goal.threshold} 分 · ${goal.activityId === 'cat' ? '养小猫' : '种小树'}`).fontSize(20)
+              Text(`虚拟成长进度 ${Math.min(100, Math.floor((goal.highestPoints / goal.threshold) * 100))}%`)
+                .id(`child-growth-${goal.id}`)
+                .fontSize(18)
               Text(`目标奖励：${goal.reward}`).fontSize(18)
             }.width('100%').padding(16).backgroundColor(Color.White).borderRadius(16)
           }, (goal: Goal) => goal.id)
@@ -378,6 +452,7 @@ struct Index {
         .fontWeight(FontWeight.Bold)
       Button('管理打卡目标').id('parent-goals').onClick(() => this.screen = 'goals')
       Button('管理任务池').id('parent-task-pool').onClick(() => this.screen = 'task-pool')
+      Button('配置孩子主题与老师').id('parent-child-profile').onClick(() => this.openChildProfile())
       Text('为果果和阳阳分别安排适合的学习与生活任务。')
         .fontSize(19)
         .fontColor('#65584F')
@@ -444,6 +519,12 @@ struct Index {
                   }
                 }, (result: SettlementTaskResult) => result.taskId)
                 Text(`净变化 ${goal.netDelta} 分，清算后 ${goal.pointsAfter} 分`).id(`settlement-net-${goal.goalId}`).fontSize(18)
+                Text('老师反馈').fontSize(18).fontWeight(FontWeight.Medium)
+                ForEach(goal.feedback ?? [], (step) => {
+                  Text(step.text)
+                    .id(step.once ? `settlement-feedback-played-${goal.goalId}-${step.kind}` : `settlement-feedback-${goal.goalId}-${step.kind}`)
+                    .fontSize(16)
+                }, (step) => `${goal.goalId}-${step.kind}-${step.text}`)
               }.width('100%').padding(14).backgroundColor(Color.White).borderRadius(12)
             }, (goal: SettlementGoalPreview) => goal.goalId)
           }
@@ -454,6 +535,37 @@ struct Index {
     }
     .width('100%')
     .height('100%')
+    .padding(40)
+    .backgroundColor('#FFF9EF')
+  }
+
+  @Builder
+  private ChildProfilePanel() {
+    Column({ space: 18 }) {
+      Text('孩子主题与老师').fontSize(30).fontWeight(FontWeight.Bold)
+      Row({ space: 12 }) {
+        Button('果果').id('profile-guoguo').onClick(() => this.pickProfileChild('guoguo'))
+        Button('阳阳').id('profile-yangyang').onClick(() => this.pickProfileChild('yangyang'))
+      }
+      TextInput({ text: this.profileName, placeholder: '孩子昵称' }).id('profile-name').onChange((value: string) => this.profileName = value)
+      Row({ space: 12 }) {
+        Button('成熟主题').id('profile-theme-mature').onClick(() => this.profileTheme = 'mature')
+        Button('专注主题').id('profile-theme-focus').onClick(() => this.profileTheme = 'focus')
+        Button('童趣主题').id('profile-theme-playful').onClick(() => this.profileTheme = 'playful')
+      }
+      Row({ space: 12 }) {
+        Button('沉稳老师').id('profile-teacher-calm').onClick(() => this.profileTeacher = 'calm')
+        Button('故事老师').id('profile-teacher-storybook').onClick(() => this.profileTeacher = 'storybook')
+      }
+      Text(this.message).id('profile-message').fontSize(18).fontColor('#8A5C45')
+      Row({ space: 16 }) {
+        Button('返回家长管理').id('profile-back').onClick(() => this.screen = 'parent')
+        Button('保存').id('profile-save').onClick(() => this.saveChildProfile())
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
     .padding(40)
     .backgroundColor('#FFF9EF')
   }
@@ -471,6 +583,8 @@ struct Index {
       TaskPoolPanel({ module: this.module, parentToken: this.parentToken, onBack: () => this.screen = 'parent' })
     } else if (this.screen === 'settlement') {
       this.SettlementPanel()
+    } else if (this.screen === 'child-profile') {
+      this.ChildProfilePanel()
     } else if (this.screen === 'parent') {
       this.ParentPanel()
     } else {

@@ -102,3 +102,29 @@ test('[TASK-9-UI01][AC-20][AC-31] ArkUI 提供豁免与清算审阅过期处理�
     assert.match(source, new RegExp(selector));
   }
 });
+
+test('[TASK-11-UI01][AC-41][AC-42][AC-43][AC-44][AC-45][AC-54] ArkUI 提供虚拟成长、老师反馈和孩子配置稳定选择器', async () => {
+  const index = await readFile(INDEX_PATH, 'utf8');
+  const goalPanel = await readFile(new URL('../entry/src/main/ets/pages/GoalPanel.ets', import.meta.url), 'utf8');
+  const selectors = [
+    'parent-child-profile',
+    'profile-guoguo',
+    'profile-yangyang',
+    'profile-theme-focus',
+    'profile-teacher-calm',
+    'profile-teacher-storybook',
+    'profile-save',
+    'settlement-feedback-',
+    'settlement-feedback-played-',
+    'child-teacher',
+    'child-growth-',
+    'goal-growth-',
+  ];
+
+  assert.match(index, /老师反馈/);
+  assert.match(index, /虚拟成长进度/);
+  assert.match(goalPanel, /虚拟成长进度/);
+  for (const selector of selectors) {
+    assert.match(`${index}\n${goalPanel}`, new RegExp(selector));
+  }
+});
