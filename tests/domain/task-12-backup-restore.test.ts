@@ -126,6 +126,13 @@ test('[TASK-12-S02][AC-49] 损坏、不兼容或违反领域不变量的备份�
   const { module, parent } = await family();
   const original: FamilyBackup = value(await module.inspect(parent.token, { type: 'backup-export' }));
   const attempts: Array<[string, FamilyBackup]> = [
+    ['BACKUP_INVARIANT_BROKEN', {
+      backupFormatVersion: 1,
+      schemaVersion: 6,
+      exportedAt: original.exportedAt,
+      checksum: original.checksum,
+      summary: original.summary,
+    } as FamilyBackup],
     ['BACKUP_CHECKSUM_MISMATCH', {
       ...original,
       data: { ...original.data, revision: original.data.revision + 1 },

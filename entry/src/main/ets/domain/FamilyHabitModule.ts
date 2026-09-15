@@ -374,6 +374,11 @@ function checksumText(text: string): string {
 }
 
 function validateBackup(backup: FamilyBackup): DomainError | null {
+  if (backup === undefined || backup === null || backup.data === undefined
+    || backup.data.children === undefined || !Array.isArray(backup.data.children)
+    || backup.summary === undefined || typeof backup.checksum !== 'string') {
+    return { code: 'BACKUP_INVARIANT_BROKEN', message: '备份不满足家庭数据规则，已拒绝恢复。' };
+  }
   if (backup.backupFormatVersion !== BACKUP_FORMAT_VERSION
     || backup.schemaVersion < 1
     || backup.schemaVersion > 6
