@@ -588,7 +588,11 @@ export class FamilyHabitModule {
     if (command.type === 'restore-backup') {
       const invalid = validateBackup(command.backup);
       if (invalid !== null) return { ok: false, error: invalid };
-      return { ok: false, error: { code: 'COMMAND_UNSUPPORTED', message: '暂不支持此操作。' } };
+      const nextState = cloneState({
+        ...command.backup.data,
+        parentCredential: this.state.parentCredential === null ? null : { ...this.state.parentCredential },
+      });
+      return this.saveState(nextState);
     }
     if (command.type === 'submit-checkin') {
       if (session.role === 'child' && session.childId !== command.childId) {

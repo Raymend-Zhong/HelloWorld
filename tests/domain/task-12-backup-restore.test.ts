@@ -27,6 +27,63 @@ async function family() {
   return { module, parent };
 }
 
+async function settledFamily() {
+  const { module, parent } = await family();
+  const child = value(await module.openSession({ entry: 'child', childId: 'guoguo' }));
+  const guoguoTaskId = value(await module.execute(parent.token, {
+    type: 'copy-task-template',
+    childId: 'guoguo',
+    templateId: 'junior-math',
+  })).taskId!;
+  const yangyangTaskId = value(await module.execute(parent.token, {
+    type: 'copy-task-template',
+    childId: 'yangyang',
+    templateId: 'kindergarten-english',
+  })).taskId!;
+  const goalId = value(await module.execute(parent.token, {
+    type: 'create-goal',
+    childId: 'guoguo',
+    businessDate: '2026-09-14',
+    name: '恢复验证目标',
+    description: '验证完整恢复',
+    threshold: 100,
+    plannedDays: 30,
+    reward: '奖励',
+    activityId: 'cat',
+    tasks: [{ taskId: guoguoTaskId, weekdays: [1], rules: { completionPoints: 8, missedPolicy: 'deduct', deductionPoints: 2, streakEnabled: false, streakCap: null } }],
+  })).goalId!;
+  value(await module.execute(parent.token, {
+    type: 'create-goal',
+    childId: 'yangyang',
+    businessDate: '2026-09-14',
+    name: '阳阳目标',
+    description: '验证另一个孩子',
+    threshold: 20,
+    plannedDays: 7,
+    reward: '贴纸',
+    activityId: 'tree',
+    tasks: [{ taskId: yangyangTaskId, weekdays: [1] }],
+  }));
+  value(await module.execute(child.token, {
+    type: 'submit-checkin',
+    childId: 'guoguo',
+    taskId: guoguoTaskId,
+    businessDate: '2026-09-14',
+  }));
+  const preview = value(await module.inspect(parent.token, {
+    type: 'settlement-preview',
+    childId: 'guoguo',
+    businessDate: '2026-09-14',
+  }));
+  value(await module.execute(parent.token, {
+    type: 'confirm-settlement',
+    childId: 'guoguo',
+    businessDate: '2026-09-14',
+    expectedRevision: preview.revision,
+  }));
+  return { module, parent, goalId };
+}
+
 test('[TASK-12-S01][AC-48][AC-55] 家长导出完整 JSON 备份且不包含家长凭证和会话数据', async () => {
   const { module, parent } = await family();
   const taskId = value(await module.execute(parent.token, {
@@ -94,4 +151,39 @@ test('[TASK-12-S02][AC-49] 损坏、不兼容或违反领域不变量的备份�
     const after: FamilyBackup = value(await module.inspect(parent.token, { type: 'backup-export' }));
     assert.deepEqual(after.data, original.data);
   }
+});
+
+test('[TASK-12-S03][AC-50][AC-55] 有效备份恢复完整领域数据且不覆盖当前设备家长密码', async () => {
+  const source = await settledFamily();
+  const backup: FamilyBackup = value(await source.module.inspect(source.parent.token, { type: 'backup-export' }));
+  const expectedDetail = value(await source.module.inspect(source.parent.token, {
+    type: 'goal-detail',
+    childId: 'guoguo',
+    goalId: source.goalId,
+  }));
+
+  const target = await FamilyHabitModule.create(new MemoryPersistenceAdapter(), hasher);
+  const setup = value(await target.openSession({ entry: 'parent-setup' }));
+  value(await target.execute(setup.token, { type: 'set-parent-password', password: '1357' }));
+  const targetParent = value(await target.openSession({ entry: 'parent', password: '1357' }));
+  value(await target.execute(targetParent.token, {
+    type: 'copy-task-template',
+    childId: 'guoguo',
+    templateId: 'junior-reading',
+  }));
+
+  value(await target.execute(targetParent.token, {
+    type: 'restore-backup',
+    backup,
+  } as never));
+
+  assert.equal((await target.openSession({ entry: 'parent', password: '2468' })).ok, false);
+  const restoredParent = value(await target.openSession({ entry: 'parent', password: '1357' }));
+  const restoredBackup: FamilyBackup = value(await target.inspect(restoredParent.token, { type: 'backup-export' }));
+  assert.deepEqual(restoredBackup.data, backup.data);
+  assert.deepEqual(value(await target.inspect(restoredParent.token, {
+    type: 'goal-detail',
+    childId: 'guoguo',
+    goalId: source.goalId,
+  })), expectedDetail);
 });
