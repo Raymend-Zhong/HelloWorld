@@ -241,6 +241,9 @@ export struct GoalPanel {
         Text(`目标奖励：${goal.reward}`).fontSize(21)
         Text(this.activityName(goal.activityId)).fontSize(22)
         Text(`历史最高积分：${goal.highestPoints}`).fontSize(17)
+        Text(`虚拟成长进度：${Math.min(100, Math.floor((goal.highestPoints / goal.threshold) * 100))}%`)
+          .id(`goal-growth-${goal.id}`)
+          .fontSize(17)
         ForEach(goal.tasks, (task: GoalTask) => {
           Column({ space: 8 }) {
             Text(this.taskName(task.taskId)).fontSize(21)

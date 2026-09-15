@@ -3,6 +3,7 @@ import { window } from '@kit.ArkUI';
 
 import { FamilyHabitModule } from '../domain/FamilyHabitModule';
 import { ArkDataPersistenceAdapter } from '../infrastructure/ArkDataPersistenceAdapter';
+import { HarmonyBackupFileAdapter } from '../infrastructure/BackupFileAdapter';
 import { HarmonyPasswordHasher } from '../infrastructure/HarmonyPasswordHasher';
 
 export default class EntryAbility extends UIAbility {
@@ -14,6 +15,10 @@ export default class EntryAbility extends UIAbility {
         new HarmonyPasswordHasher(),
       );
       AppStorage.setOrCreate<FamilyHabitModule>('familyHabitModule', module);
+      AppStorage.setOrCreate<HarmonyBackupFileAdapter>(
+        'backupFileAdapter',
+        new HarmonyBackupFileAdapter(this.context),
+      );
       await windowStage.loadContent('pages/Index');
     } catch (_error) {
       await windowStage.loadContent('pages/StartupError');
