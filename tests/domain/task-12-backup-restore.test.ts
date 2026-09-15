@@ -187,3 +187,37 @@ test('[TASK-12-S03][AC-50][AC-55] 有效备份恢复完整领域数据且不覆�
     goalId: source.goalId,
   })), expectedDetail);
 });
+
+test('[TASK-12-S04][AC-49] 有效备份恢复写入失败时当前数据保持不变', async () => {
+  class FailingPersistence extends MemoryPersistenceAdapter {
+    fail = false;
+
+    override async save(state: import('../../entry/src/main/ets/domain/FamilyHabitModule.js').FamilyState): Promise<void> {
+      if (this.fail) throw new Error('模拟恢复写入失败');
+      await super.save(state);
+    }
+  }
+
+  const source = await settledFamily();
+  const backup: FamilyBackup = value(await source.module.inspect(source.parent.token, { type: 'backup-export' }));
+  const disk = new FailingPersistence();
+  const target = await FamilyHabitModule.create(disk, hasher);
+  const setup = value(await target.openSession({ entry: 'parent-setup' }));
+  value(await target.execute(setup.token, { type: 'set-parent-password', password: '1357' }));
+  const parent = value(await target.openSession({ entry: 'parent', password: '1357' }));
+  value(await target.execute(parent.token, {
+    type: 'copy-task-template',
+    childId: 'guoguo',
+    templateId: 'junior-reading',
+  }));
+  const before: FamilyBackup = value(await target.inspect(parent.token, { type: 'backup-export' }));
+
+  disk.fail = true;
+  const restored = await target.execute(parent.token, {
+    type: 'restore-backup',
+    backup,
+  } as never);
+  assert.equal(restored.ok, false);
+  if (!restored.ok) assert.equal(restored.error.code, 'PERSISTENCE_FAILED');
+  assert.deepEqual(value(await target.inspect(parent.token, { type: 'backup-export' })).data, before.data);
+});
