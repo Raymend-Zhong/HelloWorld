@@ -128,3 +128,27 @@ test('[TASK-11-UI01][AC-41][AC-42][AC-43][AC-44][AC-45][AC-54] ArkUI 提供虚�
     assert.match(`${index}\n${goalPanel}`, new RegExp(selector));
   }
 });
+
+test('[TASK-12-UI01][AC-48][AC-49][AC-50][AC-55] ArkUI 提供备份导出、恢复摘要和确认恢复稳定选择器', async () => {
+  const source = await readFile(INDEX_PATH, 'utf8');
+  const selectors = [
+    'parent-backup',
+    'backup-screen',
+    'backup-export',
+    'backup-choose-restore',
+    'backup-confirm-restore',
+    'backup-summary',
+    'backup-exported-at',
+    'backup-checksum',
+    'backup-message',
+    'backup-back',
+  ];
+
+  assert.match(source, /数据备份与恢复/);
+  assert.match(source, /请核对备份摘要/);
+  assert.match(source, /当前设备家长密码保持不变/);
+  assert.match(source, /备份文件损坏/);
+  for (const selector of selectors) {
+    assert.match(source, new RegExp(`\\.id\\('${selector}'\\)`));
+  }
+});

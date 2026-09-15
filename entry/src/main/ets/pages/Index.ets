@@ -5,6 +5,7 @@ import {
   ChildDay,
   ScheduledTask,
   ChildId,
+  FamilyBackup,
   FamilyHabitModule,
   ParentSetupSession,
   SettlementPreview,
@@ -12,8 +13,9 @@ import {
   SettlementTaskResult,
   ChildProfile,
 } from '../domain/FamilyHabitModule';
+import { BackupFileAdapter } from '../infrastructure/BackupFileAdapter';
 
-type Screen = 'entry' | 'child' | 'parent-auth' | 'parent' | 'task-pool' | 'goals' | 'settlement' | 'child-profile';
+type Screen = 'entry' | 'child' | 'parent-auth' | 'parent' | 'task-pool' | 'goals' | 'settlement' | 'child-profile' | 'backup';
 
 @Entry
 @Component
@@ -21,6 +23,7 @@ struct Index {
   private module: FamilyHabitModule = AppStorage.get<FamilyHabitModule>(
     'familyHabitModule',
   ) as FamilyHabitModule;
+  private backupFileAdapter: BackupFileAdapter | undefined = AppStorage.get<BackupFileAdapter>('backupFileAdapter');
 
   @State private screen: Screen = 'entry';
   @State private currentChildId: ChildId = 'guoguo';
@@ -42,6 +45,10 @@ struct Index {
   @State private profileAvatar: string = 'guoguo';
   @State private profileTheme: string = 'mature';
   @State private profileTeacher: string = 'calm';
+  @State private backupSummary: string = '';
+  @State private backupExportedAt: string = '';
+  @State private backupChecksum: string = '';
+  private pendingBackup: FamilyBackup | null = null;
   private parentSetupSession: ParentSetupSession | null = null;
 
   private async openChild(childId: ChildId): Promise<void> {
@@ -260,6 +267,80 @@ struct Index {
     await this.openChildProfile();
   }
 
+  private stringifyBackup(backup: FamilyBackup): string {
+    return JSON.stringify(backup, null, 2).replace(/[^\x00-\x7F]/g, (value: string) => {
+      return `\\u${value.charCodeAt(0).toString(16).padStart(4, '0')}`;
+    });
+  }
+
+  private describeBackup(backup: FamilyBackup): string {
+    return `孩子 ${backup.summary.children} 个，任务 ${backup.summary.taskPoolTasks} 个，目标 ${backup.summary.goals} 个，打卡 ${backup.summary.checkins} 条，清算 ${backup.summary.settlements} 条。`;
+  }
+
+  private async exportBackup(): Promise<void> {
+    if (this.backupFileAdapter === undefined) {
+      this.message = '文件选择器不可用，请稍后重试。';
+      return;
+    }
+    const backup = await this.module.inspect(this.parentToken, { type: 'backup-export' });
+    if (backup.ok === false) {
+      this.message = backup.error.message;
+      return;
+    }
+    const saved = await this.backupFileAdapter.saveBackup(
+      `family-habit-backup-${backup.value.exportedAt.slice(0, 10)}.json`,
+      this.stringifyBackup(backup.value),
+    );
+    if (saved === null) {
+      this.message = '已取消导出。';
+      return;
+    }
+    this.message = '家庭数据备份已导出。';
+    this.backupSummary = this.describeBackup(backup.value);
+    this.backupExportedAt = backup.value.exportedAt;
+    this.backupChecksum = backup.value.checksum;
+  }
+
+  private async chooseBackupForRestore(): Promise<void> {
+    if (this.backupFileAdapter === undefined) {
+      this.message = '文件选择器不可用，请稍后重试。';
+      return;
+    }
+    const content = await this.backupFileAdapter.readBackup();
+    if (content === null) {
+      this.message = '已取消恢复。';
+      return;
+    }
+    try {
+      const backup = JSON.parse(content) as FamilyBackup;
+      this.pendingBackup = backup;
+      this.backupSummary = this.describeBackup(backup);
+      this.backupExportedAt = backup.exportedAt;
+      this.backupChecksum = backup.checksum;
+      this.message = '请核对备份摘要，确认后再恢复。';
+    } catch (_) {
+      this.pendingBackup = null;
+      this.message = '备份文件损坏，无法读取。';
+    }
+  }
+
+  private async confirmRestoreBackup(): Promise<void> {
+    if (this.pendingBackup === null) {
+      this.message = '请先选择要恢复的备份。';
+      return;
+    }
+    const result = await this.module.execute(this.parentToken, {
+      type: 'restore-backup',
+      backup: this.pendingBackup,
+    });
+    if (result.ok === false) {
+      this.message = result.error.message;
+      return;
+    }
+    this.pendingBackup = null;
+    this.message = '家庭数据已恢复，当前设备家长密码保持不变。';
+  }
+
   private async openParentEntry(): Promise<void> {
     const setup = await this.module.openSession({ entry: 'parent-setup' });
     if (setup.ok && setup.value.role === 'parent-setup') {
@@ -453,6 +534,14 @@ struct Index {
       Button('管理打卡目标').id('parent-goals').onClick(() => this.screen = 'goals')
       Button('管理任务池').id('parent-task-pool').onClick(() => this.screen = 'task-pool')
       Button('配置孩子主题与老师').id('parent-child-profile').onClick(() => this.openChildProfile())
+      Button('数据备份与恢复').id('parent-backup').onClick(() => {
+        this.message = '';
+        this.backupSummary = '';
+        this.backupExportedAt = '';
+        this.backupChecksum = '';
+        this.pendingBackup = null;
+        this.screen = 'backup';
+      })
       Text('为果果和阳阳分别安排适合的学习与生活任务。')
         .fontSize(19)
         .fontColor('#65584F')
@@ -462,6 +551,33 @@ struct Index {
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
+    .backgroundColor('#FFF9EF')
+  }
+
+  @Builder
+  private BackupPanel() {
+    Column({ space: 18 }) {
+      Text('数据备份与恢复')
+        .id('backup-screen')
+        .fontSize(30)
+        .fontWeight(FontWeight.Bold)
+      Text(this.message).id('backup-message').fontSize(18).fontColor('#8A5C45')
+      if (this.backupSummary.length > 0) {
+        Text(this.backupSummary).id('backup-summary').fontSize(18).fontColor('#65584F')
+        Text(`导出时间：${this.backupExportedAt}`).id('backup-exported-at').fontSize(16).fontColor('#65584F')
+        Text(`完整性校验：${this.backupChecksum}`).id('backup-checksum').fontSize(16).fontColor('#65584F')
+      }
+      Row({ space: 16 }) {
+        Button('导出 JSON 备份').id('backup-export').onClick(() => this.exportBackup())
+        Button('选择备份文件').id('backup-choose-restore').onClick(() => this.chooseBackupForRestore())
+        Button('确认恢复').id('backup-confirm-restore').enabled(this.pendingBackup !== null).onClick(() => this.confirmRestoreBackup())
+      }
+      Button('返回家长管理').id('backup-back').onClick(() => this.screen = 'parent')
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .padding(40)
     .backgroundColor('#FFF9EF')
   }
 
@@ -585,6 +701,8 @@ struct Index {
       this.SettlementPanel()
     } else if (this.screen === 'child-profile') {
       this.ChildProfilePanel()
+    } else if (this.screen === 'backup') {
+      this.BackupPanel()
     } else if (this.screen === 'parent') {
       this.ParentPanel()
     } else {
