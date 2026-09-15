@@ -68,3 +68,90 @@ test('[TASK-7-UI01][AC-38][AC-40] ArkUI 提供目标结束状态和终止操作�
     assert.match(source, new RegExp(selector));
   }
 });
+
+test('[TASK-8-UI01][AC-17][AC-18] ArkUI 提供频率计划和周期进度稳定选择器', async () => {
+  const index = await readFile(INDEX_PATH, 'utf8');
+  const goalPanel = await readFile(new URL('../entry/src/main/ets/pages/GoalPanel.ets', import.meta.url), 'utf8');
+  const taskEditor = await readFile(new URL('../entry/src/main/ets/pages/GoalTaskEditor.ets', import.meta.url), 'utf8');
+
+  assert.match(index, /本周进度/);
+  assert.match(goalPanel, /每周完成 \$\{task\.plan\.requiredCount\} 次/);
+  for (const selector of [
+    'goal-plan-date-',
+    'goal-plan-weekly-',
+    'goal-weekly-required-',
+  ]) {
+    assert.match(taskEditor, new RegExp(selector));
+  }
+});
+
+test('[TASK-9-UI01][AC-20][AC-31] ArkUI 提供豁免与清算审阅过期处理稳定选择器', async () => {
+  const source = await readFile(INDEX_PATH, 'utf8');
+  const selectors = [
+    'settlement-exempt-date-',
+    'settlement-exempt-weekly-',
+    'settlement-exempt-all-date',
+    'settlement-message',
+  ];
+
+  assert.match(source, /已豁免/);
+  assert.match(source, /全部任务豁免/);
+  assert.match(source, /周期任务豁免/);
+  assert.match(source, /清算审阅已过期/);
+  for (const selector of selectors) {
+    assert.match(source, new RegExp(selector));
+  }
+});
+
+test('[TASK-11-UI01][AC-41][AC-42][AC-43][AC-44][AC-45][AC-54] ArkUI 提供虚拟成长、老师反馈和孩子配置稳定选择器', async () => {
+  const index = await readFile(INDEX_PATH, 'utf8');
+  const goalPanel = await readFile(new URL('../entry/src/main/ets/pages/GoalPanel.ets', import.meta.url), 'utf8');
+  const selectors = [
+    'parent-child-profile',
+    'profile-guoguo',
+    'profile-yangyang',
+    'profile-theme-focus',
+    'profile-teacher-calm',
+    'profile-teacher-storybook',
+    'profile-save',
+    'settlement-feedback-',
+    'settlement-feedback-played-',
+    'child-teacher',
+    'child-growth-',
+    'goal-growth-',
+  ];
+
+  assert.match(index, /老师反馈/);
+  assert.match(index, /虚拟成长进度/);
+  assert.match(goalPanel, /虚拟成长进度/);
+  for (const selector of selectors) {
+    assert.match(`${index}\n${goalPanel}`, new RegExp(selector));
+  }
+});
+
+test('[TASK-12-UI01][AC-48][AC-49][AC-50][AC-55] ArkUI 提供备份导出、恢复摘要和确认恢复稳定选择器', async () => {
+  const source = await readFile(INDEX_PATH, 'utf8');
+  const selectors = [
+    'parent-backup',
+    'backup-screen',
+    'backup-export',
+    'backup-choose-restore',
+    'backup-confirm-restore',
+    'backup-summary',
+    'backup-exported-at',
+    'backup-checksum',
+    'backup-message',
+    'backup-back',
+  ];
+
+  assert.match(source, /数据备份与恢复/);
+  assert.match(source, /请核对备份摘要/);
+  assert.match(source, /当前设备家长密码保持不变/);
+  assert.match(source, /备份文件损坏/);
+  assert.match(source, /backup-check/);
+  assert.match(source, /导出失败，家庭数据未改变/);
+  assert.match(source, /读取备份失败，当前数据未改变/);
+  for (const selector of selectors) {
+    assert.match(source, new RegExp(`\\.id\\('${selector}'\\)`));
+  }
+});

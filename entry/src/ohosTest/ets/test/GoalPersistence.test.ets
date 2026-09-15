@@ -34,7 +34,7 @@ export default function goalPersistenceTest(): void {
         };
         await adapter.save(old);
         const module = await FamilyHabitModule.create(adapter, hasher);
-        expect((await adapter.load())?.schemaVersion).assertEqual(5);
+        expect((await adapter.load())?.schemaVersion).assertEqual(6);
         const parent = await module.openSession({ entry: 'parent', password: '2468' });
         expect(parent.ok).assertTrue();
         if (parent.ok === false) return;
@@ -124,6 +124,129 @@ export default function goalPersistenceTest(): void {
         if (detail.ok === false) return;
         expect(detail.value.goal.points).assertEqual(6);
         expect(detail.value.goal.highestPoints).assertEqual(6);
+      } finally {
+        adapter?.close();
+        if (ability !== null) await relationalStore.deleteRdbStore(ability.context, storeName);
+      }
+    });
+
+    it('[TASK-8-DB01][AC-17][AC-18] 频率计划和周期结果关闭重开后保持', Level.LEVEL2, async () => {
+      let adapter: ArkDataPersistenceAdapter | null = null;
+      let ability: UIAbility | null = null;
+      const storeName = 'weekly_frequency_contract_test.db';
+      try {
+        const delegator = abilityDelegatorRegistry.getAbilityDelegator();
+        const want: Want = { bundleName: abilityDelegatorRegistry.getArguments().bundleName, abilityName: 'EntryAbility' };
+        await delegator.startAbility(want);
+        await Driver.create().waitForIdle(1000, 3000);
+        ability = await delegator.getCurrentTopAbility();
+        await relationalStore.deleteRdbStore(ability.context, storeName);
+        adapter = await ArkDataPersistenceAdapter.open(ability.context, storeName);
+        const module = await FamilyHabitModule.create(adapter, hasher);
+        const setup = await module.openSession({ entry: 'parent-setup' });
+        expect(setup.ok).assertTrue();
+        if (setup.ok === false) return;
+        expect((await module.execute(setup.value.token, { type: 'set-parent-password', password: '2468' })).ok).assertTrue();
+        const parent = await module.openSession({ entry: 'parent', password: '2468' });
+        expect(parent.ok).assertTrue();
+        if (parent.ok === false) return;
+        const copied = await module.execute(parent.value.token, { type: 'copy-task-template', childId: 'guoguo', templateId: 'junior-math' });
+        expect(copied.ok).assertTrue();
+        if (copied.ok === false || copied.value.taskId === undefined) return;
+        const taskId = copied.value.taskId;
+        const created = await module.execute(parent.value.token, { type: 'create-goal', childId: 'guoguo', businessDate: '2026-09-14',
+          name: '频率目标', description: '真实持久化', threshold: 100, plannedDays: 30, reward: '奖励', activityId: 'cat',
+          tasks: [{ taskId, plan: { kind: 'weekly-frequency', requiredCount: 2 },
+            rules: { completionPoints: 6, missedPolicy: 'no-points', deductionPoints: 0, streakEnabled: false, streakCap: null } }] });
+        expect(created.ok).assertTrue();
+        if (created.ok === false || created.value.goalId === undefined) return;
+        const child = await module.openSession({ entry: 'child', childId: 'guoguo' });
+        expect(child.ok).assertTrue();
+        if (child.ok === false) return;
+        expect((await module.execute(child.value.token, { type: 'submit-checkin', childId: 'guoguo', taskId, businessDate: '2026-09-14' })).ok).assertTrue();
+        expect((await module.execute(child.value.token, { type: 'submit-checkin', childId: 'guoguo', taskId, businessDate: '2026-09-14' })).ok).assertTrue();
+        const preview = await module.inspect(parent.value.token, { type: 'settlement-preview', childId: 'guoguo', businessDate: '2026-09-14' });
+        expect(preview.ok).assertTrue();
+        if (preview.ok === false) return;
+        expect((await module.execute(parent.value.token, { type: 'confirm-settlement', childId: 'guoguo', businessDate: '2026-09-14', expectedRevision: preview.value.revision })).ok).assertTrue();
+        adapter.close();
+        adapter = await ArkDataPersistenceAdapter.open(ability.context, storeName);
+        const restarted = await FamilyHabitModule.create(adapter, hasher);
+        const session = await restarted.openSession({ entry: 'parent', password: '2468' });
+        expect(session.ok).assertTrue();
+        if (session.ok === false) return;
+        const detail = await restarted.inspect(session.value.token, { type: 'goal-detail', childId: 'guoguo', goalId: created.value.goalId });
+        expect(detail.ok).assertTrue();
+        if (detail.ok === false) return;
+        expect(detail.value.goal.tasks[0].plan.kind).assertEqual('weekly-frequency');
+        if (detail.value.goal.tasks[0].plan.kind === 'weekly-frequency') {
+          expect(detail.value.goal.tasks[0].plan.requiredCount).assertEqual(2);
+        }
+        expect(detail.value.goal.points).assertEqual(6);
+        const day = await restarted.inspect(session.value.token, { type: 'child-day', childId: 'guoguo', businessDate: '2026-09-14' });
+        expect(day.ok).assertTrue();
+        if (day.ok) expect(day.value.tasks[0].requiredCount).assertEqual(2);
+      } finally {
+        adapter?.close();
+        if (ability !== null) await relationalStore.deleteRdbStore(ability.context, storeName);
+      }
+    });
+
+    it('[TASK-9-DB01][AC-20][AC-31] 豁免和修订号关闭重开后保持', Level.LEVEL2, async () => {
+      let adapter: ArkDataPersistenceAdapter | null = null;
+      let ability: UIAbility | null = null;
+      const storeName = 'exemption_contract_test.db';
+      try {
+        const delegator = abilityDelegatorRegistry.getAbilityDelegator();
+        const want: Want = { bundleName: abilityDelegatorRegistry.getArguments().bundleName, abilityName: 'EntryAbility' };
+        await delegator.startAbility(want);
+        await Driver.create().waitForIdle(1000, 3000);
+        ability = await delegator.getCurrentTopAbility();
+        await relationalStore.deleteRdbStore(ability.context, storeName);
+        adapter = await ArkDataPersistenceAdapter.open(ability.context, storeName);
+        const module = await FamilyHabitModule.create(adapter, hasher);
+        const setup = await module.openSession({ entry: 'parent-setup' });
+        expect(setup.ok).assertTrue();
+        if (setup.ok === false) return;
+        expect((await module.execute(setup.value.token, { type: 'set-parent-password', password: '2468' })).ok).assertTrue();
+        const parent = await module.openSession({ entry: 'parent', password: '2468' });
+        expect(parent.ok).assertTrue();
+        if (parent.ok === false) return;
+        const copied = await module.execute(parent.value.token, { type: 'copy-task-template', childId: 'guoguo', templateId: 'junior-math' });
+        expect(copied.ok).assertTrue();
+        if (copied.ok === false || copied.value.taskId === undefined) return;
+        const taskId = copied.value.taskId;
+        const weeklyCopied = await module.execute(parent.value.token, { type: 'copy-task-template', childId: 'guoguo', templateId: 'junior-reading' });
+        expect(weeklyCopied.ok).assertTrue();
+        if (weeklyCopied.ok === false || weeklyCopied.value.taskId === undefined) return;
+        const weeklyTaskId = weeklyCopied.value.taskId;
+        const created = await module.execute(parent.value.token, { type: 'create-goal', childId: 'guoguo', businessDate: '2026-09-14',
+          name: '豁免目标', description: '真实持久化', threshold: 100, plannedDays: 30, reward: '奖励', activityId: 'cat',
+          tasks: [
+            { taskId, weekdays: [1], rules: { completionPoints: 6, missedPolicy: 'deduct', deductionPoints: 2, streakEnabled: false, streakCap: null } },
+            { taskId: weeklyTaskId, plan: { kind: 'weekly-frequency', requiredCount: 2 },
+              rules: { completionPoints: 8, missedPolicy: 'deduct', deductionPoints: 3, streakEnabled: false, streakCap: null } },
+          ] });
+        expect(created.ok).assertTrue();
+        const stalePreview = await module.inspect(parent.value.token, { type: 'settlement-preview', childId: 'guoguo', businessDate: '2026-09-14' });
+        expect(stalePreview.ok).assertTrue();
+        if (stalePreview.ok === false) return;
+        expect((await module.execute(parent.value.token, { type: 'exempt-date-task', childId: 'guoguo', taskId, businessDate: '2026-09-14' })).ok).assertTrue();
+        const staleConfirm = await module.execute(parent.value.token, { type: 'confirm-settlement', childId: 'guoguo', businessDate: '2026-09-14', expectedRevision: stalePreview.value.revision });
+        expect(staleConfirm.ok).assertFalse();
+        expect((await module.execute(parent.value.token, { type: 'exempt-weekly-task', childId: 'guoguo', taskId: weeklyTaskId, weekOf: '2026-09-21' })).ok).assertTrue();
+        adapter.close();
+        adapter = await ArkDataPersistenceAdapter.open(ability.context, storeName);
+        const restarted = await FamilyHabitModule.create(adapter, hasher);
+        const session = await restarted.openSession({ entry: 'parent', password: '2468' });
+        expect(session.ok).assertTrue();
+        if (session.ok === false) return;
+        const datePreview = await restarted.inspect(session.value.token, { type: 'settlement-preview', childId: 'guoguo', businessDate: '2026-09-14' });
+        expect(datePreview.ok).assertTrue();
+        if (datePreview.ok) expect(datePreview.value.goals[0].results[0].status).assertEqual('exempted');
+        const weekPreview = await restarted.inspect(session.value.token, { type: 'settlement-preview', childId: 'guoguo', businessDate: '2026-09-27' });
+        expect(weekPreview.ok).assertTrue();
+        if (weekPreview.ok) expect(weekPreview.value.goals[0].results[0].status).assertEqual('exempted');
       } finally {
         adapter?.close();
         if (ability !== null) await relationalStore.deleteRdbStore(ability.context, storeName);

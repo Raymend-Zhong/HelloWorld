@@ -167,7 +167,7 @@ test('[TASK-5-S07][AC-10][AC-12] 模式2升级保留任务和凭证并在重开�
   delete old.goals;
   await disk.save(old);
   const module = await FamilyHabitModule.create(disk, hasher);
-  assert.equal((await disk.load())?.schemaVersion, 5);
+  assert.equal((await disk.load())?.schemaVersion, 6);
   const parent = value(await module.openSession({ entry: 'parent', password: '2468' }));
   assert.equal(value(await module.inspect(parent.token, { type: 'family-overview' })).revision, old.revision);
   const created = value(await module.execute(parent.token, { type: 'create-goal', ...draft(taskId) }));
@@ -221,7 +221,7 @@ test('[TASK-5-S09] 迁移或目标写入失败保留旧状态且重试不重复�
   assert.deepEqual(await disk.load(), savedOld);
   disk.fail = false;
   await FamilyHabitModule.create(disk, hasher);
-  assert.equal((await disk.load())?.schemaVersion, 5);
+  assert.equal((await disk.load())?.schemaVersion, 6);
 });
 
 test('[TASK-5-S10][AC-09] 目标编辑可查询稳定内置活动标识且返回副本', async () => {

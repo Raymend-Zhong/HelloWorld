@@ -2,9 +2,14 @@ import { TaskRules, validTaskRulePoints, validTaskRuleOptions } from './TaskTemp
 
 export interface GoalTaskInput {
   taskId: string;
-  weekdays: number[];
+  weekdays?: number[];
+  plan?: TaskPlan;
   rules?: TaskRules;
 }
+
+export type TaskPlan =
+  | { kind: 'date-weekdays'; weekdays: number[] }
+  | { kind: 'weekly-frequency'; requiredCount: number };
 
 export interface GoalInput {
   name: string;
@@ -19,6 +24,7 @@ export interface GoalInput {
 export interface GoalTask {
   taskId: string;
   weekdays: number[];
+  plan: TaskPlan;
   rules: TaskRules;
   streakCount: number;
 }
@@ -34,7 +40,19 @@ export interface Goal extends GoalInput {
 }
 
 export function cloneGoal(goal: Goal): Goal {
-  return { ...goal, tasks: goal.tasks.map(task => ({ ...task, weekdays: [...task.weekdays], rules: { ...task.rules }, streakCount: task.streakCount ?? 0 })) };
+  return { ...goal, tasks: goal.tasks.map(task => ({
+    ...task,
+    weekdays: [...task.weekdays],
+    plan: clonePlan(task.plan ?? { kind: 'date-weekdays', weekdays: task.weekdays }),
+    rules: { ...task.rules },
+    streakCount: task.streakCount ?? 0,
+  })) };
+}
+
+export function clonePlan(plan: TaskPlan): TaskPlan {
+  return plan.kind === 'date-weekdays'
+    ? { kind: 'date-weekdays', weekdays: [...plan.weekdays] }
+    : { kind: 'weekly-frequency', requiredCount: plan.requiredCount };
 }
 
 export interface GoalValidationError {
@@ -71,14 +89,27 @@ export function validateGoal(input: GoalInput, businessDate: string): GoalValida
   if (field !== '') return { code: 'VALIDATION_FAILED', field, message };
   for (let index = 0; index < input.tasks.length; index += 1) {
     const task = input.tasks[index]!;
-    if (task.weekdays.length === 0 || new Set(task.weekdays).size !== task.weekdays.length
-      || task.weekdays.some(day => !Number.isInteger(day) || day < 1 || day > 7)) {
+    const plan = normalizeTaskPlan(task);
+    if (plan === null) {
+      return { code: 'VALIDATION_FAILED', field: `tasks.${index}.plan`, message: '请选择有效的任务计划。' };
+    }
+    if (plan.kind === 'date-weekdays' && (plan.weekdays.length === 0 || new Set(plan.weekdays).size !== plan.weekdays.length
+      || plan.weekdays.some(day => !Number.isInteger(day) || day < 1 || day > 7))) {
       return { code: 'VALIDATION_FAILED', field: `tasks.${index}.weekdays`, message: '请为任务选择不重复的星期一至星期日。' };
+    }
+    if (plan.kind === 'weekly-frequency' && (!Number.isSafeInteger(plan.requiredCount) || plan.requiredCount <= 0)) {
+      return { code: 'VALIDATION_FAILED', field: `tasks.${index}.plan`, message: '每周所需次数须为正整数。' };
     }
     const rules = task.rules;
     if (rules !== undefined && (!validTaskRulePoints(rules) || !validTaskRuleOptions(rules))) {
       return { code: 'VALIDATION_FAILED', field: `tasks.${index}.rules`, message: '完成积分须为正整数，扣分值和奖励上限须为非负整数，请检查未完成处理与连续奖励设置。' };
     }
   }
+  return null;
+}
+
+export function normalizeTaskPlan(task: GoalTaskInput | GoalTask): TaskPlan | null {
+  if (task.plan !== undefined) return clonePlan(task.plan);
+  if (task.weekdays !== undefined) return { kind: 'date-weekdays', weekdays: [...task.weekdays] };
   return null;
 }
