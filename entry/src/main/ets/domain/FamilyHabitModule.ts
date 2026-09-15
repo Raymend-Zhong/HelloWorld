@@ -145,6 +145,7 @@ export interface EditGoalCommand extends GoalInput { type: 'edit-goal'; childId:
 export type DomainCommand =
   | EditGoalCommand
   | CreateGoalCommand
+  | { type: 'restore-backup'; backup: FamilyBackup }
   | { type: 'exempt-date-task'; childId: ChildId; taskId: string; businessDate: string }
   | { type: 'exempt-date-tasks'; childId: ChildId; businessDate: string }
   | { type: 'exempt-weekly-task'; childId: ChildId; taskId: string; weekOf: string }
@@ -372,6 +373,40 @@ function checksumText(text: string): string {
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
+function validateBackup(backup: FamilyBackup): DomainError | null {
+  if (backup.backupFormatVersion !== BACKUP_FORMAT_VERSION
+    || backup.schemaVersion < 1
+    || backup.schemaVersion > 6
+    || (backup.data.templateSeedVersion ?? 0) > TEMPLATE_SEED_VERSION) {
+    return { code: 'BACKUP_VERSION_UNSUPPORTED', message: '备份版本不兼容，无法恢复。' };
+  }
+  const childIds = backup.data.children.map(child => child.id).sort();
+  if (childIds.length !== 2 || childIds[0] !== 'guoguo' || childIds[1] !== 'yangyang') {
+    return { code: 'BACKUP_INVARIANT_BROKEN', message: '备份不满足家庭数据规则，已拒绝恢复。' };
+  }
+  const knownChildren = new Set<ChildId>(backup.data.children.map(child => child.id));
+  for (const task of backup.data.taskPool ?? []) {
+    if (!knownChildren.has(task.childId)) {
+      return { code: 'BACKUP_INVARIANT_BROKEN', message: '备份不满足家庭数据规则，已拒绝恢复。' };
+    }
+  }
+  const taskKeys = new Set((backup.data.taskPool ?? []).map(task => `${task.childId}:${task.id}`));
+  for (const goal of backup.data.goals ?? []) {
+    if (!knownChildren.has(goal.childId) || goal.tasks.length === 0 || !builtInActivities().some(activity => activity.id === goal.activityId)) {
+      return { code: 'BACKUP_INVARIANT_BROKEN', message: '备份不满足家庭数据规则，已拒绝恢复。' };
+    }
+    for (const task of goal.tasks) {
+      if (!taskKeys.has(`${goal.childId}:${task.taskId}`)) {
+        return { code: 'BACKUP_INVARIANT_BROKEN', message: '备份不满足家庭数据规则，已拒绝恢复。' };
+      }
+    }
+  }
+  if (checksumText(JSON.stringify(backup.data)) !== backup.checksum) {
+    return { code: 'BACKUP_CHECKSUM_MISMATCH', message: '备份完整性校验失败，已拒绝恢复。' };
+  }
+  return null;
+}
+
 export class MemoryPersistenceAdapter implements PersistenceAdapter {
   private state: FamilyState | null = null;
 
@@ -549,6 +584,11 @@ export class FamilyHabitModule {
         parentCredential: { salt, digest },
       };
       return this.saveState(nextState);
+    }
+    if (command.type === 'restore-backup') {
+      const invalid = validateBackup(command.backup);
+      if (invalid !== null) return { ok: false, error: invalid };
+      return { ok: false, error: { code: 'COMMAND_UNSUPPORTED', message: '暂不支持此操作。' } };
     }
     if (command.type === 'submit-checkin') {
       if (session.role === 'child' && session.childId !== command.childId) {

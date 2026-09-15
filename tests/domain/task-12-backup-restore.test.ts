@@ -64,3 +64,34 @@ test('[TASK-12-S01][AC-48][AC-55] 家长导出完整 JSON 备份且不包含家�
   assert.equal(json.includes('2468'), false);
   assert.equal(json.includes('session-'), false);
 });
+
+test('[TASK-12-S02][AC-49] 损坏、不兼容或违反领域不变量的备份被拒绝且当前数据保持不变', async () => {
+  const { module, parent } = await family();
+  const original: FamilyBackup = value(await module.inspect(parent.token, { type: 'backup-export' }));
+  const attempts: Array<[string, FamilyBackup]> = [
+    ['BACKUP_CHECKSUM_MISMATCH', {
+      ...original,
+      data: { ...original.data, revision: original.data.revision + 1 },
+    }],
+    ['BACKUP_VERSION_UNSUPPORTED', {
+      ...original,
+      backupFormatVersion: original.backupFormatVersion + 1,
+    }],
+    ['BACKUP_INVARIANT_BROKEN', {
+      ...original,
+      data: { ...original.data, children: original.data.children.slice(0, 1) },
+      checksum: original.checksum,
+    }],
+  ];
+
+  for (const [code, backup] of attempts) {
+    const restored = await module.execute(parent.token, {
+      type: 'restore-backup',
+      backup,
+    } as never);
+    assert.equal(restored.ok, false, code);
+    if (!restored.ok) assert.equal(restored.error.code, code);
+    const after: FamilyBackup = value(await module.inspect(parent.token, { type: 'backup-export' }));
+    assert.deepEqual(after.data, original.data);
+  }
+});
