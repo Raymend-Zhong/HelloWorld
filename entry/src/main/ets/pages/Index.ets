@@ -267,12 +267,6 @@ struct Index {
     await this.openChildProfile();
   }
 
-  private stringifyBackup(backup: FamilyBackup): string {
-    return JSON.stringify(backup, null, 2).replace(/[^\x00-\x7F]/g, (value: string) => {
-      return `\\u${value.charCodeAt(0).toString(16).padStart(4, '0')}`;
-    });
-  }
-
   private describeBackup(backup: FamilyBackup): string {
     return `孩子 ${backup.summary.children} 个，任务 ${backup.summary.taskPoolTasks} 个，目标 ${backup.summary.goals} 个，打卡 ${backup.summary.checkins} 条，清算 ${backup.summary.settlements} 条。`;
   }
@@ -287,12 +281,17 @@ struct Index {
       this.message = backup.error.message;
       return;
     }
-    const saved = await this.backupFileAdapter.saveBackup(
-      `family-habit-backup-${backup.value.exportedAt.slice(0, 10)}.json`,
-      this.stringifyBackup(backup.value),
-    );
-    if (saved === null) {
-      this.message = '已取消导出。';
+    try {
+      const saved = await this.backupFileAdapter.saveBackup(
+        `family-habit-backup-${backup.value.exportedAt.slice(0, 10)}.json`,
+        JSON.stringify(backup.value, null, 2),
+      );
+      if (saved === null) {
+        this.message = '已取消导出。';
+        return;
+      }
+    } catch (_) {
+      this.message = '导出失败，家庭数据未改变。';
       return;
     }
     this.message = '家庭数据备份已导出。';
@@ -306,17 +305,33 @@ struct Index {
       this.message = '文件选择器不可用，请稍后重试。';
       return;
     }
-    const content = await this.backupFileAdapter.readBackup();
+    let content: string | null = null;
+    try {
+      content = await this.backupFileAdapter.readBackup();
+    } catch (_) {
+      this.pendingBackup = null;
+      this.message = '读取备份失败，当前数据未改变。';
+      return;
+    }
     if (content === null) {
       this.message = '已取消恢复。';
       return;
     }
     try {
       const backup = JSON.parse(content) as FamilyBackup;
+      const checked = await this.module.inspect(this.parentToken, {
+        type: 'backup-check',
+        backup,
+      });
+      if (checked.ok === false) {
+        this.pendingBackup = null;
+        this.message = checked.error.message;
+        return;
+      }
       this.pendingBackup = backup;
-      this.backupSummary = this.describeBackup(backup);
-      this.backupExportedAt = backup.exportedAt;
-      this.backupChecksum = backup.checksum;
+      this.backupSummary = `孩子 ${checked.value.summary.children} 个，任务 ${checked.value.summary.taskPoolTasks} 个，目标 ${checked.value.summary.goals} 个，打卡 ${checked.value.summary.checkins} 条，清算 ${checked.value.summary.settlements} 条。`;
+      this.backupExportedAt = checked.value.exportedAt;
+      this.backupChecksum = checked.value.checksum;
       this.message = '请核对备份摘要，确认后再恢复。';
     } catch (_) {
       this.pendingBackup = null;

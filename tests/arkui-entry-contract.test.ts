@@ -148,6 +148,9 @@ test('[TASK-12-UI01][AC-48][AC-49][AC-50][AC-55] ArkUI 提供备份导出、恢�
   assert.match(source, /请核对备份摘要/);
   assert.match(source, /当前设备家长密码保持不变/);
   assert.match(source, /备份文件损坏/);
+  assert.match(source, /backup-check/);
+  assert.match(source, /导出失败，家庭数据未改变/);
+  assert.match(source, /读取备份失败，当前数据未改变/);
   for (const selector of selectors) {
     assert.match(source, new RegExp(`\\.id\\('${selector}'\\)`));
   }

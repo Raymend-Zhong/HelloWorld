@@ -95,6 +95,12 @@ export interface FamilyBackup {
   data: BackupFamilyData;
 }
 
+export interface BackupCheck {
+  exportedAt: string;
+  checksum: string;
+  summary: BackupSummary;
+}
+
 export interface PersistenceAdapter {
   load(): Promise<FamilyState | null>;
   save(state: FamilyState): Promise<void>;
@@ -218,6 +224,7 @@ export interface SettlementHistory {
 
 export type InspectRequest =
   | { type: 'backup-export' }
+  | { type: 'backup-check'; backup: FamilyBackup }
   | { type: 'settlement-history'; childId: ChildId; businessDate: string }
   | { type: 'settlement-preview'; childId: ChildId; businessDate: string }
   | { type: 'growth-activities' }
@@ -253,7 +260,7 @@ export interface TaskPoolSnapshot {
   revision: number;
 }
 
-export type InspectSnapshot = ActivitySnapshot | ChildDay | GoalList | GoalDetail | SettlementPreview | SettlementHistory | FamilyBackup | FamilyOverview | ChildHome | TemplateSnapshot | TaskPoolSnapshot;
+export type InspectSnapshot = ActivitySnapshot | ChildDay | GoalList | GoalDetail | SettlementPreview | SettlementHistory | FamilyBackup | BackupCheck | FamilyOverview | ChildHome | TemplateSnapshot | TaskPoolSnapshot;
 
 const BACKUP_FORMAT_VERSION = 1;
 
@@ -390,14 +397,22 @@ function validateBackup(backup: FamilyBackup): DomainError | null {
     return { code: 'BACKUP_INVARIANT_BROKEN', message: '备份不满足家庭数据规则，已拒绝恢复。' };
   }
   const knownChildren = new Set<ChildId>(backup.data.children.map(child => child.id));
-  for (const task of backup.data.taskPool ?? []) {
+  const taskPool = backup.data.taskPool ?? [];
+  if (!Array.isArray(taskPool)) {
+    return { code: 'BACKUP_INVARIANT_BROKEN', message: '备份不满足家庭数据规则，已拒绝恢复。' };
+  }
+  for (const task of taskPool) {
     if (!knownChildren.has(task.childId)) {
       return { code: 'BACKUP_INVARIANT_BROKEN', message: '备份不满足家庭数据规则，已拒绝恢复。' };
     }
   }
-  const taskKeys = new Set((backup.data.taskPool ?? []).map(task => `${task.childId}:${task.id}`));
-  for (const goal of backup.data.goals ?? []) {
-    if (!knownChildren.has(goal.childId) || goal.tasks.length === 0 || !builtInActivities().some(activity => activity.id === goal.activityId)) {
+  const goals = backup.data.goals ?? [];
+  if (!Array.isArray(goals)) {
+    return { code: 'BACKUP_INVARIANT_BROKEN', message: '备份不满足家庭数据规则，已拒绝恢复。' };
+  }
+  const taskKeys = new Set(taskPool.map(task => `${task.childId}:${task.id}`));
+  for (const goal of goals) {
+    if (!knownChildren.has(goal.childId) || !Array.isArray(goal.tasks) || goal.tasks.length === 0 || !builtInActivities().some(activity => activity.id === goal.activityId)) {
       return { code: 'BACKUP_INVARIANT_BROKEN', message: '备份不满足家庭数据规则，已拒绝恢复。' };
     }
     for (const task of goal.tasks) {
@@ -1252,6 +1267,7 @@ export class FamilyHabitModule {
     request: { type: 'child-home' },
   ): Promise<Result<ChildHome>>;
   async inspect(token: string, request: { type: 'backup-export' }): Promise<Result<FamilyBackup>>;
+  async inspect(token: string, request: { type: 'backup-check'; backup: FamilyBackup }): Promise<Result<BackupCheck>>;
   async inspect(token: string, request: InspectRequest): Promise<Result<InspectSnapshot>> {
     const session = this.sessions.get(token);
     if (session === undefined) {
@@ -1280,6 +1296,18 @@ export class FamilyHabitModule {
         checksum: checksumText(JSON.stringify(data)),
         summary,
         data,
+      } };
+    }
+    if (request.type === 'backup-check') {
+      if (session.role !== 'parent') {
+        return { ok: false, error: { code: 'PERMISSION_DENIED', message: '这个操作需要家长来完成。' } };
+      }
+      const invalid = validateBackup(request.backup);
+      if (invalid !== null) return { ok: false, error: invalid };
+      return { ok: true, value: {
+        exportedAt: request.backup.exportedAt,
+        checksum: request.backup.checksum,
+        summary: { ...request.backup.summary },
       } };
     }
     if (request.type === 'goal-detail' || request.type === 'goal-list' || request.type === 'child-day' || request.type === 'settlement-preview' || request.type === 'settlement-history') {

@@ -146,6 +146,11 @@ test('[TASK-12-S02][AC-49] 损坏、不兼容或违反领域不变量的备份�
       data: { ...original.data, children: original.data.children.slice(0, 1) },
       checksum: original.checksum,
     }],
+    ['BACKUP_INVARIANT_BROKEN', {
+      ...original,
+      data: { ...original.data, goals: [{ ...original.data.goals?.[0], tasks: undefined }] as never },
+      checksum: original.checksum,
+    }],
   ];
 
   for (const [code, backup] of attempts) {
@@ -158,6 +163,28 @@ test('[TASK-12-S02][AC-49] 损坏、不兼容或违反领域不变量的备份�
     const after: FamilyBackup = value(await module.inspect(parent.token, { type: 'backup-export' }));
     assert.deepEqual(after.data, original.data);
   }
+});
+
+test('[TASK-12-S02B][AC-49] 家长选择备份后可在恢复前完成检查并获得摘要', async () => {
+  const { module, parent } = await family();
+  const backup: FamilyBackup = value(await module.inspect(parent.token, { type: 'backup-export' }));
+
+  const checked = value(await module.inspect(parent.token, {
+    type: 'backup-check',
+    backup,
+  }));
+  assert.deepEqual(checked, {
+    exportedAt: backup.exportedAt,
+    checksum: backup.checksum,
+    summary: backup.summary,
+  });
+
+  const invalid = await module.inspect(parent.token, {
+    type: 'backup-check',
+    backup: { ...backup, data: { ...backup.data, revision: backup.data.revision + 1 } },
+  });
+  assert.equal(invalid.ok, false);
+  if (!invalid.ok) assert.equal(invalid.error.code, 'BACKUP_CHECKSUM_MISMATCH');
 });
 
 test('[TASK-12-S03][AC-50][AC-55] 有效备份恢复完整领域数据且不覆盖当前设备家长密码', async () => {
