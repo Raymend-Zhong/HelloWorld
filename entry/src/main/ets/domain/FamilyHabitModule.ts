@@ -76,6 +76,25 @@ export interface FamilyState {
   parentCredential: ParentCredential | null;
 }
 
+export type BackupFamilyData = Omit<FamilyState, 'parentCredential'>;
+
+export interface BackupSummary {
+  children: number;
+  taskPoolTasks: number;
+  goals: number;
+  checkins: number;
+  settlements: number;
+}
+
+export interface FamilyBackup {
+  backupFormatVersion: number;
+  schemaVersion: number;
+  exportedAt: string;
+  checksum: string;
+  summary: BackupSummary;
+  data: BackupFamilyData;
+}
+
 export interface PersistenceAdapter {
   load(): Promise<FamilyState | null>;
   save(state: FamilyState): Promise<void>;
@@ -197,6 +216,7 @@ export interface SettlementHistory {
 }
 
 export type InspectRequest =
+  | { type: 'backup-export' }
   | { type: 'settlement-history'; childId: ChildId; businessDate: string }
   | { type: 'settlement-preview'; childId: ChildId; businessDate: string }
   | { type: 'growth-activities' }
@@ -232,7 +252,9 @@ export interface TaskPoolSnapshot {
   revision: number;
 }
 
-export type InspectSnapshot = ActivitySnapshot | ChildDay | GoalList | GoalDetail | SettlementPreview | SettlementHistory | FamilyOverview | ChildHome | TemplateSnapshot | TaskPoolSnapshot;
+export type InspectSnapshot = ActivitySnapshot | ChildDay | GoalList | GoalDetail | SettlementPreview | SettlementHistory | FamilyBackup | FamilyOverview | ChildHome | TemplateSnapshot | TaskPoolSnapshot;
+
+const BACKUP_FORMAT_VERSION = 1;
 
 const INITIAL_CHILDREN: ChildProfile[] = [
   {
@@ -334,6 +356,20 @@ function cloneState(state: FamilyState): FamilyState {
       ? null
       : { ...state.parentCredential },
   };
+}
+
+function cloneBackupData(state: FamilyState): BackupFamilyData {
+  const { parentCredential: _, ...data } = cloneState(state);
+  return data;
+}
+
+function checksumText(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
 export class MemoryPersistenceAdapter implements PersistenceAdapter {
@@ -1166,6 +1202,7 @@ export class FamilyHabitModule {
     token: string,
     request: { type: 'child-home' },
   ): Promise<Result<ChildHome>>;
+  async inspect(token: string, request: { type: 'backup-export' }): Promise<Result<FamilyBackup>>;
   async inspect(token: string, request: InspectRequest): Promise<Result<InspectSnapshot>> {
     const session = this.sessions.get(token);
     if (session === undefined) {
@@ -1175,6 +1212,27 @@ export class FamilyHabitModule {
       };
     }
     if (request.type === 'growth-activities') return { ok: true, value: { activities: builtInActivities() } };
+    if (request.type === 'backup-export') {
+      if (session.role !== 'parent') {
+        return { ok: false, error: { code: 'PERMISSION_DENIED', message: '这个操作需要家长来完成。' } };
+      }
+      const data = cloneBackupData(this.state);
+      const summary: BackupSummary = {
+        children: data.children.length,
+        taskPoolTasks: (data.taskPool ?? []).length,
+        goals: (data.goals ?? []).length,
+        checkins: (data.checkins ?? []).length,
+        settlements: (data.settlements ?? []).length,
+      };
+      return { ok: true, value: {
+        backupFormatVersion: BACKUP_FORMAT_VERSION,
+        schemaVersion: data.schemaVersion,
+        exportedAt: new Date().toISOString(),
+        checksum: checksumText(JSON.stringify(data)),
+        summary,
+        data,
+      } };
+    }
     if (request.type === 'goal-detail' || request.type === 'goal-list' || request.type === 'child-day' || request.type === 'settlement-preview' || request.type === 'settlement-history') {
       if (session.role !== 'parent' && (session.role !== 'child' || session.childId !== request.childId)) {
         return { ok: false, error: { code: 'PERMISSION_DENIED', message: '请从对应孩子入口查看目标。' } };
